@@ -62,9 +62,10 @@ See [CREDITS.md](CREDITS.md) for everything else.
 
 ## How the data refresh works
 
-`.github/workflows/update-data.yml` runs every 6 hours (and on demand), executes `scripts/fetch-sats.mjs`, and commits
-`data/sats.json` if it changed. Commits made with the built-in `GITHUB_TOKEN` do not trigger other workflows, so
-`.github/workflows/pages.yml` also listens for the update workflow finishing (`workflow_run`) and redeploys the site.
+`.github/workflows/pages.yml` deploys on every push to `main` and also every 6 hours on a schedule. Each
+deploy runs `scripts/fetch-sats.mjs` to write fresh TLEs straight into the built site, so orbits stay current
+without committing a ~4 MB file to git every few hours. If the fetch fails, the committed `data/sats.json`
+snapshot is deployed instead (refresh it occasionally with `node scripts/fetch-sats.mjs`).
 The script refuses to overwrite the catalog with a suspiciously small result.
 
 ## Deploy to GitHub Pages

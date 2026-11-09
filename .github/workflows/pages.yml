@@ -1,13 +1,14 @@
 name: Deploy to GitHub Pages
 
+# Deploys the static site. Satellite orbits (TLEs) go stale in a few days, so the
+# site is also rebuilt every 6 hours with fresh data fetched at build time.
+# Fresh data is written only into the deployed site, not committed, which keeps
+# the git history small. The committed data/sats.json is a fallback snapshot.
 on:
   push:
     branches: [main]
-  # Pushes made with GITHUB_TOKEN (the data refresh) do not trigger `push` workflows,
-  # so redeploy explicitly when the data workflow completes.
-  workflow_run:
-    workflows: ['Update satellite data']
-    types: [completed]
+  schedule:
+    - cron: '17 */6 * * *'
   workflow_dispatch:
 
 permissions:
@@ -21,20 +22,27 @@ concurrency:
 
 jobs:
   deploy:
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          ref: main
+          node-version: 20
       - name: Assemble site
         run: |
-          mkdir _site
-          cp -r index.html css js data assets _site/
+          mkdir -p _site/data/sky
+          cp -r index.html css js assets _site/
+          cp data/sats.json _site/data/
+          cp data/sky/sky.json data/sky/constellations.json _site/data/sky/
           touch _site/.nojekyll
+      - name: Fetch fresh satellite data
+        # If CelesTrak (and the fallback) are down, keep the committed snapshot.
+        continue-on-error: true
+        run: node scripts/fetch-sats.mjs --out _site/data/sats.json
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
