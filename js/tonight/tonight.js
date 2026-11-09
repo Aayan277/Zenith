@@ -18,6 +18,9 @@ const ctx = {
 };
 let root, token = 0;
 const els = {};
+const HEADLINERS = new Set([25544, 48274, 20580]);
+// The list keeps headliners plus passes bright and high enough to be worth stepping outside for.
+const worthIt = p => HEADLINERS.has(p.satId) || (p.mag <= 0.5 && p.maxEl >= 25);
 const isMobile = () => window.matchMedia('(max-width: 760px)').matches;
 let setSheet = () => {};
 const CHEV = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"/></svg>';
@@ -289,7 +292,8 @@ function renderPasses() {
     if (ctx.passesPending) { el.innerHTML = head('Upcoming passes', 'next 3 days') + skeleton(4); return; }
     if (ctx.passesErr) { el.innerHTML = head('Upcoming passes') + errorBlock('Could not predict passes.'); return; }
     const now = clock.now(), hero = nextIss();
-    const list = (ctx.passes || []).filter(p => p.end > now && p !== hero);
+    // The worker returns every naked-eye pass (mag <= 4.5); the list keeps the ones worth stepping outside for.
+    const list = (ctx.passes || []).filter(p => p.end > now && p !== hero && worthIt(p));
     if (!list.length) { el.innerHTML = head('Upcoming passes', right) + `<p class="tn-empty">No other visible passes in the next 3 days.</p>`; return; }
     const shown = ctx.showAllPasses ? list : list.slice(0, 6);
     el.innerHTML = head('Upcoming passes', right) + `<ul class="tn-passlist">` + shown.map(p => `

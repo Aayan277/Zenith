@@ -84,6 +84,8 @@ function bisect(rec, ctx, a, b, wantAtB) {
 function passesFor(sat, ctx, startMs, endMs) {
   const rec = satellite.twoline2satrec(sat.l1, sat.l2);
   if (rec.error) return [];
+  // Only low-Earth orbits make sky passes (>= ~10 rev/day); GEO/HEO objects hover for hours.
+  if (rec.no * 1440 / (2 * Math.PI) < 10) return [];
   const out = [];
   let prevVis = false, prevT = startMs, runStart = null;
   const finish = (s, e) => {
@@ -110,7 +112,8 @@ function passesFor(sat, ctx, startMs, endMs) {
     prevVis = vis; prevT = t;
   }
   if (prevVis && runStart != null) finish(runStart, prevT);
-  return out.filter(p => p.end - p.start >= 20000);
+  // Drop blips, anything longer than 20 min (high orbit) and naked-eye-invisible passes (mag > 4.5).
+  return out.filter(p => p.end - p.start >= 20000 && p.end - p.start <= 20 * 60000 && p.mag <= 4.5);
 }
 
 self.onmessage = (ev) => {

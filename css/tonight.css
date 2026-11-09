@@ -188,7 +188,7 @@
     transition: height .35s cubic-bezier(.2,.8,.2,1), transform .35s, opacity .25s;
     animation: tnSheetIn .7s cubic-bezier(.2,.8,.2,1) both;
   }
-  .tn-panel.collapsed { height: var(--peek); }
+  .tn-panel.collapsed { height: var(--peek); bottom: calc(var(--timebar-h) + var(--gutter) + 8px); }
   .tn-panel.collapsed .tn-body { display: none; }
   .tn-panel.dragging { transition: none; }
   .tn-panel.collapsed.dragging .tn-body { display: flex; }
