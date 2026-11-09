@@ -15,7 +15,7 @@
 .au-big small { font-size: 15px; color: var(--text-dim); margin-left: 1px; }
 .au-big.sm { font-size: 24px; color: var(--text-dim); }
 .au-cl { font-size: 11px; color: var(--text-faint); margin-top: 4px; letter-spacing: .02em; }
-.au-dk { margin-left: auto; align-self: center; font-size: 11px; color: var(--text-faint); padding: 3px 9px; border: 1px solid var(--glass-border); border-radius: 999px; }
+.au-dk { white-space: nowrap; margin-left: auto; align-self: center; font-size: 11px; color: var(--text-faint); padding: 3px 9px; border: 1px solid var(--glass-border); border-radius: 999px; }
 .au-small { margin: 8px 0 0; font-size: 12px; color: var(--text-faint); line-height: 1.45; }
 .au-small.warn { color: var(--warn); }
 
@@ -32,14 +32,15 @@
 /* Kp gauge */
 .au-kprow { display: flex; align-items: center; gap: 12px; }
 .au-gauge { width: 148px; height: 92px; flex: none; overflow: visible; }
-.au-gv { font-family: var(--mono); font-size: 30px; font-weight: 500; }
+.au-gv { font-family: var(--mono); font-size: 26px; font-weight: 500; }
 .au-gl { font-family: var(--mono); font-size: 10px; letter-spacing: .08em; fill: var(--text-dim); text-transform: uppercase; }
 .au-gt { font-family: var(--mono); font-size: 9px; fill: var(--text-faint); }
 .au-wind { min-width: 0; flex: 1; }
 .au-g { font-size: 13px; font-weight: 500; margin-bottom: 8px; }
-.au-wind dl { margin: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
-.au-wind dt { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--text-faint); }
-.au-wind dd { margin: 2px 0 0; font-size: 16px; }
+.au-wind dl { margin: 0; display: grid; gap: 4px; }
+.au-wind dl > div { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 4px 0; border-top: 1px solid rgba(150,190,255,.07); }
+.au-wind dt { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--text-faint); white-space: nowrap; }
+.au-wind dd { margin: 0; font-size: 15px; white-space: nowrap; }
 .au-wind small { font-size: 10px; color: var(--text-faint); }
 .au-bzn { margin-top: 6px; font-size: 11px; color: var(--text-faint); }
 

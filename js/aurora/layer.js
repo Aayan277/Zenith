@@ -9,7 +9,7 @@ import { aur, onAurora, loadOvation, GRID_W, GRID_H } from './data.js';
 import { lsGet, lsSet } from '../ui/notify.js';
 
 const KEY_ON = 'zenith:aurora:globe';
-let on = lsGet(KEY_ON, true);
+let on = lsGet(KEY_ON, false); // off by default: the OVATION grid is ~0.9 MB per refresh
 let ctx = null, THREE = null, group = null, tex = null, mats = [], fade = 0, hasData = false, texAt = 0;
 const sun = { v: null };
 
@@ -54,8 +54,8 @@ const FS = `
     float wave = 0.86 + 0.14 * sin(uTime * 0.55 + lon * 9.0 + uLayer * 2.0);
     float I = base * (0.45 + 1.0 * rays) * wave;
     vec3 green = vec3(0.10, 0.98, 0.42), teal = vec3(0.22, 1.0, 0.76), pink = vec3(0.96, 0.28, 0.86);
-    vec3 col = mix(green, teal, smoothstep(0.25, 0.75, base));
-    col = mix(col, pink, smoothstep(0.62, 1.15, base) * (0.45 + 0.4 * uLayer));
+    vec3 col = mix(green, teal, smoothstep(0.5, 1.0, base) * 0.7);
+    col = mix(col, pink, smoothstep(0.7, 1.3, base) * (0.5 + 0.4 * uLayer));
     float night = smoothstep(0.14, -0.26, dot(n, uSun));
     float vis = mix(0.07, 1.0, night);
     float fres = 1.0 - clamp(dot(n, normalize(vView)), 0.0, 1.0);

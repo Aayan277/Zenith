@@ -5,6 +5,7 @@ import { getSat } from '../data/catalog.js';
 
 const svg = (inner, extra = '') => `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" ${extra}>${inner}</svg>`;
 const ICONS = {
+  rocket: svg('<path d="M12 2.5c3 2 4.5 5.2 4.5 9V15h-9v-3.5c0-3.8 1.5-7 4.5-9z"/><circle cx="12" cy="9.5" r="1.6"/><path d="M7.5 13.5L5 16.5V19l2.5-1.5M16.5 13.5l2.5 3V19l-2.5-1.5M10 18.5l2 3 2-3"/>'),
   sat: svg('<rect x="9.5" y="9.5" width="5" height="5" rx="1" transform="rotate(45 12 12)"/><path d="M4 7l4 4M6 5l4 4M16 15l4 4M14 17l4 4M12 12l-5.5 5.5M12 12l5.5-5.5" opacity=".9"/><path d="M3.5 20.5l3-3"/>'),
   planet: svg('<circle cx="12" cy="12" r="5"/><ellipse cx="12" cy="12" rx="10" ry="3.2" transform="rotate(-20 12 12)"/>'),
   star: svg('<path d="M12 3l1.9 6.1L20 11l-6.1 1.9L12 19l-1.9-6.1L4 11l6.1-1.9z"/>'),

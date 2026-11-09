@@ -40,8 +40,8 @@ function gauge(kp) {
   return `<svg class="au-gauge" viewBox="0 0 148 92" role="img" aria-label="Kp index ${kp.toFixed(1)} of 9${g ? ', G' + g + ' storm' : ''}">
     <g fill="none" stroke-width="9" stroke-linecap="butt">${segs}</g>
     <circle cx="${nx.toFixed(1)}" cy="${ny.toFixed(1)}" r="3.2" fill="#fff" style="filter:drop-shadow(0 0 4px ${col})"/>
-    <text x="${cx}" y="${cy - 16}" text-anchor="middle" class="au-gv" fill="${col}">${Number.isInteger(kp) ? kp : kp.toFixed(1)}</text>
-    <text x="${cx}" y="${cy + 1}" text-anchor="middle" class="au-gl">Kp${g ? ' · G' + g : ''}</text>
+    <text x="${cx}" y="${cy - 9}" text-anchor="middle" class="au-gv" fill="${col}">${Number.isInteger(kp) ? kp : kp.toFixed(1)}</text>
+    <text x="${cx}" y="${cy + 6}" text-anchor="middle" class="au-gl">Kp${g ? ' · G' + g : ''}</text>
     <text x="${cx - r}" y="${cy + 15}" text-anchor="middle" class="au-gt">0</text><text x="${cx + r}" y="${cy + 15}" text-anchor="middle" class="au-gt">9</text>
   </svg>`;
 }
@@ -57,12 +57,12 @@ function nightHours(t0, n, loc) {
 }
 function chart(now, loc) {
   const rows = aur.kp || [];
-  const t0 = Math.floor(now / (3 * H)) * 3 * H, T = 72 * H, W = 300, Hh = 118, padB = 18, padT = 6, ph = Hh - padB - padT;
+  const t0 = Math.floor(now / (3 * H)) * 3 * H, lastEnd = rows.length ? rows[rows.length - 1].t + 3 * H : t0 + 72 * H, T = Math.max(12 * H, Math.min(72 * H, lastEnd - t0)), W = 300, Hh = 118, padB = 18, padT = 6, ph = Hh - padB - padT;
   const x = t => (t - t0) / T * W, y = kp => padT + ph * (1 - Math.min(9, kp) / 9);
   const vis = rows.filter(r => r.t + 3 * H > t0 && r.t < t0 + T);
   if (!vis.length) return ERR('No forecast hours cover now.');
   let s = `<svg viewBox="0 0 ${W} ${Hh}" class="au-chart" role="img" aria-label="Kp forecast for the next 3 days. Shaded bands are dark hours at your location.">`;
-  const nh = nightHours(Math.floor(t0 / H) * H, 74, loc), base = Math.floor(t0 / H) * H;
+  const nh = nightHours(Math.floor(t0 / H) * H, 75, loc), base = Math.floor(t0 / H) * H;
   let run = null;
   nh.forEach((dark, i) => {
     const xa = x(base + i * H), xb = x(base + (i + 1) * H);
@@ -77,12 +77,12 @@ function chart(now, loc) {
     s += `<rect x="${(xa + 0.8).toFixed(1)}" y="${(y(0) - h).toFixed(1)}" width="${Math.max(1, xb - xa - 1.6).toFixed(1)}" height="${h.toFixed(1)}" rx="1.5" fill="${c}" fill-opacity="${r.obs === 'predicted' ? 0.78 : 1}"${cur ? ` stroke="#fff" stroke-width="1.2"` : ''}><title>${esc(label)}</title></rect>`;
   }
   // Day ticks at the observer's local midnight.
-  for (let i = 0; i <= 72; i++) {
+  for (let i = 0; i <= 74; i++) {
     const t = base + i * H;
     if (t < t0 || t > t0 + T) continue;
-    if (fmtLocal(t, { hour: '2-digit', hourCycle: 'h23' }) === '00') s += `<line x1="${x(t).toFixed(1)}" x2="${x(t).toFixed(1)}" y1="${padT}" y2="${y(0) + 3}" class="day"/><text x="${(x(t) + 3).toFixed(1)}" y="${Hh - 4}" class="tx">${fmtLocal(t + 6 * H, { weekday: 'short' })}</text>`;
+    if (fmtLocal(t, { hour: '2-digit', hourCycle: 'h23' }) === '00' && t > t0) s += `<line x1="${x(t).toFixed(1)}" x2="${x(t).toFixed(1)}" y1="${padT}" y2="${y(0) + 3}" class="day"/>${x(t) > 40 ? `<text x="${(x(t) + 3).toFixed(1)}" y="${Hh - 4}" class="tx">${fmtLocal(t + 6 * H, { weekday: 'short' })}</text>` : ''}`;
   }
-  s += `<text x="2" y="${Hh - 4}" class="tx">${fmtTime(now)}</text></svg>`;
+  s += `<text x="2" y="${Hh - 4}" class="tx">now</text></svg>`;
   return s;
 }
 

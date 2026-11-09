@@ -7,7 +7,10 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { API_BASE, API_VERSIONS, normalizeList } from '../js/launches/normalize.mjs';
 
-const OUT = resolve(dirname(fileURLToPath(import.meta.url)), '../data/launches.json');
+const outArg = process.argv.indexOf('--out');
+const OUT = outArg > 0 && process.argv[outArg + 1]
+  ? resolve(process.argv[outArg + 1])
+  : resolve(dirname(fileURLToPath(import.meta.url)), '../data/launches.json');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 async function get(url, tries = 3) {

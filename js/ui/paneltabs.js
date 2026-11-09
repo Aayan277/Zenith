@@ -26,10 +26,10 @@ export function currentTab() { return current; }
 /** kind: false | true | 'good' | 'warn'. Shows a small dot on the tab. */
 export function setTabBadge(id, kind) {
   badges[id] = kind;
-  const b = strip?.querySelector(`[data-tab="${id}"] .pt-badge`);
+  const b = strip?.querySelector(`.pt-tab[data-tab="${id}"] .pt-badge`);
   if (!b) return;
   b.hidden = !kind; b.dataset.kind = kind === true ? 'good' : kind || '';
-  const tab = strip.querySelector(`[data-tab="${id}"]`);
+  const tab = strip.querySelector(`.pt-tab[data-tab="${id}"]`);
   if (tab) tab.setAttribute('aria-label', kind ? `${TABS.find(t => t.id === id).label}, alert active` : TABS.find(t => t.id === id).label);
 }
 
@@ -49,13 +49,13 @@ export async function showTab(id, { focus = false } = {}) {
   const prev = current; current = id;
   root.dataset.tab = id;
   for (const t of TABS) {
-    const btn = strip.querySelector(`[data-tab="${t.id}"]`), on = t.id === id;
+    const btn = strip.querySelector(`.pt-tab[data-tab="${t.id}"]`), on = t.id === id;
     btn.setAttribute('aria-selected', String(on)); btn.tabIndex = on ? 0 : -1;
     if (t.id !== 'tonight') panes[t.id].hidden = !on;
   }
   const body = root.querySelector('.tn-body');
   if (body) body.setAttribute('aria-hidden', String(id !== 'tonight'));
-  if (focus) strip.querySelector(`[data-tab="${id}"]`).focus();
+  if (focus) strip.querySelector(`.pt-tab[data-tab="${id}"]`).focus();
   if (prev !== id) { const pm = await mounted[prev]; pm?.onHide?.(); }
   const mod = await mount(id);
   if (current === id) mod?.onShow?.();
@@ -78,7 +78,7 @@ function build() {
   }
   // The head doubles as a drag handle on phones (tonight.js); keep tab taps out of that gesture.
   strip.addEventListener('pointerdown', e => e.stopPropagation());
-  strip.addEventListener('click', e => { const b = e.target.closest('[data-tab]'); if (b) showTab(b.dataset.tab); });
+  strip.addEventListener('click', e => { const b = e.target.closest('.pt-tab'); if (b) showTab(b.dataset.tab); });
   strip.addEventListener('keydown', e => {
     const i = TABS.findIndex(t => t.id === current);
     const j = e.key === 'ArrowRight' ? (i + 1) % TABS.length : e.key === 'ArrowLeft' ? (i + TABS.length - 1) % TABS.length : e.key === 'Home' ? 0 : e.key === 'End' ? TABS.length - 1 : -1;

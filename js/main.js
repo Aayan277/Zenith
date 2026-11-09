@@ -45,6 +45,10 @@ function ensureSky() {
 
   const shell = safeInit('shell', () => import('./ui/shell.js'));
   const tonight = safeInit('tonight', () => import('./tonight/tonight.js'));
+  // Left-panel tabs (Tonight / Launches / Aurora). Their data loads when idle or on first open.
+  safeInit('paneltabs', () => import('./ui/paneltabs.js').then(m => ({ init: m.initPanelTabs })));
+  safeInit('launches',  () => import('./launches/index.js'));
+  safeInit('aurora',    () => import('./aurora/index.js'));
 
   if (hasWebGL()) {
     safeInit('globe', () => import('./globe/globe.js'));

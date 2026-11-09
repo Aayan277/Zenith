@@ -61,14 +61,14 @@ export function sampleGrid(grid, lat, lon) {
   return (g(i0, j0) * (1 - fx) + g(i0, j1) * fx) * (1 - fy) + (g(i0 + 1, j0) * (1 - fx) + g(i0 + 1, j1) * fx) * fy;
 }
 /**
- * Aurora chance for an observer: `here` = percent overhead; `horizon` = best percent poleward along the observer's
+ * Aurora chance for an observer: `here` = percent overhead; `horizon` = best percent poleward of you along the observer's
  * meridian, discounted with distance (an aurora ~100-300 km up is visible low on the horizon from up to ~800-1000 km
  * away, i.e. roughly 8-10 degrees of latitude); `horizonDeg` = how far poleward that best point is.
  */
 export function chanceAt(grid, lat, lon) {
   if (!grid) return null;
   const hemi = lat >= 0 ? 1 : -1, here = sampleGrid(grid, lat, lon);
-  let horizon = here, horizonDeg = 0;
+  let horizon = 0, horizonDeg = 0;
   for (let d = 1; d <= 10; d++) {
     const la = lat + hemi * d; if (Math.abs(la) > 90) break;
     const v = sampleGrid(grid, la, lon) * (1 - d / 12);
