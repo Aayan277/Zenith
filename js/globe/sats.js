@@ -15,6 +15,8 @@ const VERT = /* glsl */`
   attribute float aSz;     // size multiplier from RCS class
   attribute float aHi;     // 1 = notable / bright: extra glow
   attribute float aShow;   // 0 = hidden by highlights-only
+  attribute float aNew;    // 1 = joined with a later catalog stage: fades in
+  uniform float uNew;
   uniform float uU;
   uniform float uPx;
   uniform float uScale;
@@ -24,6 +26,7 @@ const VERT = /* glsl */`
   varying vec3 vCol;
   varying float vLit;
   varying float vHi;
+  varying float vFade;
   void main() {
     int ci = int(aCat + 0.5);
     vec3 b = position;
@@ -47,12 +50,14 @@ const VERT = /* glsl */`
     vCol = uCol[ci];
     vLit = aLit;
     vHi = aHi;
+    vFade = mix(1.0, uNew, aNew);
   }`;
 
 const FRAG = /* glsl */`
   varying vec3 vCol;
   varying float vLit;
   varying float vHi;
+  varying float vFade;
   void main() {
     vec2 q = gl_PointCoord * 2.0 - 1.0;
     float d = length(q);
@@ -67,13 +72,14 @@ const FRAG = /* glsl */`
       c = mix(c, vec3(l) * vec3(0.7, 0.8, 1.0), 0.65) * 0.5;
       a *= 0.5;
     }
-    gl_FragColor = vec4(c, a);
+    gl_FragColor = vec4(c, a * vFade);
     #include <colorspace_fragment>
   }`;
 
 export class SatLayer {
   constructor() {
     this.n = 0;
+    this.ids = null;                 // slot table (propagator ids array); slot i <-> list[i]
     this.list = [];
     this.idToIndex = new Map();
     this.catIdx = new Uint8Array(0);
@@ -86,11 +92,14 @@ export class SatLayer {
     this.highlightsOnly = false;
     this.hl = new Uint8Array(0);
     this.notable = [];
+    this.fading = false; this.bornAt = 0;
+    this._m = new THREE.Matrix4(); this._tmp = new THREE.Vector3();
+    this._catSize = CAT_KEYS.map(k => CATEGORIES[k].size);
 
     const col = CAT_KEYS.map(k => new THREE.Color(CATEGORIES[k].color));
     this.material = new THREE.ShaderMaterial({
       uniforms: {
-        uU: { value: 1 }, uPx: { value: 1 }, uScale: { value: 1 },
+        uU: { value: 1 }, uPx: { value: 1 }, uScale: { value: 1 }, uNew: { value: 1 },
         uCol: { value: col.map(c => new THREE.Vector3(c.r, c.g, c.b)) },
         uSize: { value: CAT_KEYS.map(k => CATEGORIES[k].size) },
         uVis: { value: new Array(NCAT).fill(1) },
@@ -103,31 +112,49 @@ export class SatLayer {
     this.points.renderOrder = 3;
   }
 
-  setCatalog(list) {
-    this.list = list;
-    const n = this.n = list.length;
-    this.idToIndex = new Map(list.map((s, i) => [s.id, i]));
-    this.catIdx = new Uint8Array(n);
-    const aCat = new Float32Array(n);
-    for (let i = 0; i < n; i++) {
-      let ci = CAT_KEYS.indexOf(list[i].cat); if (ci < 0) ci = CAT_KEYS.indexOf('other');
-      this.catIdx[i] = ci; aCat[i] = ci;
-    }
+  /**
+   * (Re)build the layer for a propagator slot table. Slot i is ids[i]. Sats that were already on screen keep
+   * their prev/next positions (matched by id), so a catalog stage swap does not move or blink existing dots;
+   * sats new to the layer fade in.
+   */
+  setSlots(ids, lookup) {
+    const old = { n: this.n, idToIndex: this.idToIndex, prev: this.prev, next: this.next, lit: this.lit };
+    const n = this.n = ids.length;
+    this.ids = ids;
+    const list = this.list = new Array(n);
+    const idToIndex = this.idToIndex = new Map();
+    const catIdx = this.catIdx = new Uint8Array(n);
+    const aCat = new Float32Array(n), aSz = new Float32Array(n), aHi = new Float32Array(n), aNew = new Float32Array(n);
+    const hl = this.hl = new Uint8Array(n);
+    const notable = this.notable = [];
+    const other = CAT_KEYS.indexOf('other');
     const SZ = { L: 1.8, M: 1.25, S: 0.65 };
-    const aSz = new Float32Array(n), aHi = new Float32Array(n);
-    this.hl = new Uint8Array(n); this.notable = [];
+    this.prev = new Float32Array(n * 3); this.next = new Float32Array(n * 3);
+    this.lit = new Uint8Array(n).fill(1);
+    let fresh = 0;
     for (let i = 0; i < n; i++) {
-      const q = list[i];
+      const id = ids[i];
+      const q = lookup(id) || { id, name: String(id), cat: 'other' };
+      list[i] = q; idToIndex.set(id, i);
+      let ci = CAT_KEYS.indexOf(q.cat); if (ci < 0) ci = other;
+      catIdx[i] = ci; aCat[i] = ci;
       aSz[i] = SZ[q.size] || 1;
       const hi = !!(q.notable || q.bright);
       aHi[i] = hi ? 1 : 0;
-      this.hl[i] = (hi || q.size === 'L') ? 1 : 0;
-      if (q.notable) this.notable.push(i);
+      hl[i] = (hi || q.size === 'L') ? 1 : 0;
+      if (q.notable) notable.push(i);
+      if (old.n) {
+        const o = old.idToIndex.get(id);
+        if (o === undefined) { aNew[i] = 1; fresh++; }
+        else {
+          const a = i * 3, b = o * 3;
+          this.prev[a] = old.prev[b]; this.prev[a + 1] = old.prev[b + 1]; this.prev[a + 2] = old.prev[b + 2];
+          this.next[a] = old.next[b]; this.next[a + 1] = old.next[b + 1]; this.next[a + 2] = old.next[b + 2];
+          this.lit[i] = old.lit[o];
+        }
+      }
     }
     this.aShow = new Float32Array(n).fill(1);
-    this.prev = new Float32Array(n * 3);
-    this.next = new Float32Array(n * 3);
-    this.lit = new Uint8Array(n).fill(1);
     const g = new THREE.BufferGeometry();
     this.attrNext = new THREE.BufferAttribute(this.next, 3).setUsage(THREE.DynamicDrawUsage);
     this.attrPrev = new THREE.BufferAttribute(this.prev, 3).setUsage(THREE.DynamicDrawUsage);
@@ -138,12 +165,14 @@ export class SatLayer {
     g.setAttribute('aLit', this.attrLit);
     g.setAttribute('aSz', new THREE.BufferAttribute(aSz, 1));
     g.setAttribute('aHi', new THREE.BufferAttribute(aHi, 1));
+    g.setAttribute('aNew', new THREE.BufferAttribute(aNew, 1));
     this.attrShow = new THREE.BufferAttribute(this.aShow, 1);
     g.setAttribute('aShow', this.attrShow);
     g.setDrawRange(0, n);
     this.points.geometry.dispose();
     this.points.geometry = g;
-    this.haveTick = false;
+    if (!old.n) this.haveTick = false;     // first generation: the next tick snaps
+    if (fresh) { this.fading = true; this.bornAt = performance.now(); this.material.uniforms.uNew.value = 0; }
     this.setHighlightsOnly(this.highlightsOnly);
   }
 
@@ -154,23 +183,17 @@ export class SatLayer {
     this.attrShow.needsUpdate = true;
   }
 
-  /** Consume a worker tick. snap=true replaces both buffers (time jump / first tick). */
+  /** Consume a worker tick for the current slot table. snap=true replaces both buffers (time jump / first tick). */
   applyTick(tick, snap) {
-    const n = this.n; if (!n) return;
-    const R = 1 / R_KM;
-    if (snap || !this.haveTick) { this.next.fill(0); }
-    else this.prev.set(this.next);
-    this.next.fill(0);
-    this.lit.fill(1);
-    const { ids, ecef, sunlit, count } = tick;
-    const map = this.idToIndex, nx = this.next, lit = this.lit;
-    for (let k = 0; k < count; k++) {
-      const i = map.get(ids[k]); if (i === undefined) continue;
-      const j = i * 3, e = k * 3;
-      nx[j] = ecef[e] * R; nx[j + 1] = ecef[e + 2] * R; nx[j + 2] = -ecef[e + 1] * R;
-      lit[i] = sunlit[k];
+    const n = this.n; if (!n || tick.ids !== this.ids) return;
+    const R = 1 / R_KM, ec = tick.ecef, sl = tick.sunlit, nx = this.next, pv = this.prev, lit = this.lit;
+    const first = snap || !this.haveTick;
+    if (!first) pv.set(nx);
+    for (let i = 0, j = 0; i < n; i++, j += 3) {
+      nx[j] = ec[j] * R; nx[j + 1] = ec[j + 2] * R; nx[j + 2] = -ec[j + 1] * R;
+      lit[i] = sl[i];
     }
-    if (snap || !this.haveTick) { this.prev.set(nx); this.tPrev = tick.time; }
+    if (first) { pv.set(nx); this.tPrev = tick.time; }
     else this.tPrev = this.tNext;
     this.tNext = tick.time;
     this.haveTick = true;
@@ -189,41 +212,51 @@ export class SatLayer {
     if (!(u > -0.5)) u = -0.5; if (u > 5) u = 5;
     this.u = u;
     this.material.uniforms.uU.value = u;
+    if (this.fading) {
+      const k = (performance.now() - this.bornAt) / 700;
+      if (k >= 1) { this.fading = false; this.material.uniforms.uNew.value = 1; }
+      else this.material.uniforms.uNew.value = k * k * (3 - 2 * k);
+    }
   }
 
   /** CPU mirror of the vertex shader. Returns false if the sat has no valid position. */
   posOf(i, out) {
     const nx = this.next, pv = this.prev, j = i * 3;
     const bx = nx[j], by = nx[j + 1], bz = nx[j + 2];
-    const lb = Math.hypot(bx, by, bz);
+    const lb = Math.sqrt(bx * bx + by * by + bz * bz);
     if (lb < 0.01) return false;
     const ax = pv[j], ay = pv[j + 1], az = pv[j + 2];
-    const la = Math.hypot(ax, ay, az);
+    const la = Math.sqrt(ax * ax + ay * ay + az * az);
     if (la < 0.01) { out.set(bx, by, bz); return true; }
     const u = this.u;
     const dax = ax / la, day = ay / la, daz = az / la, dbx = bx / lb, dby = by / lb, dbz = bz / lb;
     const c = Math.max(-1, Math.min(1, dax * dbx + day * dby + daz * dbz));
     const om = Math.acos(c);
     let dx, dy, dz;
-    if (om < 1e-4) { dx = dax + (dbx - dax) * u; dy = day + (dby - day) * u; dz = daz + (dbz - daz) * u; const m = Math.hypot(dx, dy, dz) || 1; dx /= m; dy /= m; dz /= m; }
+    if (om < 1e-4) { dx = dax + (dbx - dax) * u; dy = day + (dby - day) * u; dz = daz + (dbz - daz) * u; const m = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1; dx /= m; dy /= m; dz /= m; }
     else { const s = Math.sin(om), w0 = Math.sin((1 - u) * om) / s, w1 = Math.sin(u * om) / s; dx = w0 * dax + w1 * dbx; dy = w0 * day + w1 * dby; dz = w0 * daz + w1 * dbz; }
     const r = la + (lb - la) * u;
     out.set(dx * r, dy * r, dz * r);
     return true;
   }
 
-  /** Nearest visible, un-occluded sat within `thresh` CSS px of (px,py). Returns index or -1. */
-  pick(px, py, camera, w, h, thresh, tmp = new THREE.Vector3()) {
+  /** Nearest visible, un-occluded sat within `thresh` CSS px of (px,py). Returns index or -1.
+   *  Uses a linear blend of the two tick positions (error < 10 m, far below a pixel) to stay cheap. */
+  pick(px, py, camera, w, h, thresh) {
     const n = this.n; if (!n) return -1;
     camera.updateMatrixWorld();
-    const m = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse).elements;
+    const m = this._m.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse).elements;
     const cx = camera.position.x, cy = camera.position.y, cz = camera.position.z;
+    const nx = this.next, pv = this.prev, u = this.u, vis = this.visible, cat = this.catIdx, hl = this.hl, hlOnly = this.highlightsOnly;
     let best = -1, bestD = thresh * thresh;
     for (let i = 0; i < n; i++) {
-      if (!this.visible[this.catIdx[i]]) continue;
-      if (this.highlightsOnly && !this.hl[i]) continue;
-      if (!this.posOf(i, tmp)) continue;
-      const x = tmp.x, y = tmp.y, z = tmp.z;
+      if (!vis[cat[i]]) continue;
+      if (hlOnly && !hl[i]) continue;
+      const j = i * 3;
+      let x = nx[j], y = nx[j + 1], z = nx[j + 2];
+      if (x * x + y * y + z * z < 1e-4) continue;
+      const ax = pv[j], ay = pv[j + 1], az = pv[j + 2];
+      if (ax * ax + ay * ay + az * az > 1e-4) { x = ax + (x - ax) * u; y = ay + (y - ay) * u; z = az + (z - az) * u; }
       const W = m[3] * x + m[7] * y + m[11] * z + m[15];
       if (W <= 0) continue;
       const sx = (m[0] * x + m[4] * y + m[8] * z + m[12]) / W;
@@ -238,7 +271,7 @@ export class SatLayer {
       const qx = cx + vx * t, qy = cy + vy * t, qz = cz + vz * t;
       if (qx * qx + qy * qy + qz * qz < 0.99) continue;
       // slight preference for big (station) markers
-      d -= CATEGORIES[CAT_KEYS[this.catIdx[i]]].size * 2;
+      d -= this._catSize[cat[i]] * 2;
       if (d < bestD) { bestD = d; best = i; }
     }
     return best;

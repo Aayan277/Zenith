@@ -52,8 +52,19 @@ function loadExtra() {
       if (r.ok) {
         const j = await r.json();
         const stars = Array.isArray(j) ? j : (j.stars || j.named || []);
+        // Packed sky.json: stars = [[ra, dec, mag, bv, hip]], starNames = { hip: [name, bayer, flam, con] }
+        const names = !Array.isArray(j) && j.starNames ? j.starNames : null;
+        if (names) {
+          for (const r of stars) {
+            if (!Array.isArray(r)) continue;
+            const n = names[r[4]]; if (!n || !n[0]) continue;
+            const key = norm(n[0]);
+            out.push({ kind: 'star', id: r[4], name: n[0], sub: `Star · mag ${Number(r[2]).toFixed(1)}${n[3] ? ' · ' + n[3] : ''}`,
+                       color: STAR_COLOR, key, compact: key.replace(/ /g, ''), bonus: 10 - r[2] * 3 });
+          }
+        }
         for (const s of stars) {
-          if (Array.isArray(s)) continue; // unknown packed format: skip
+          if (Array.isArray(s)) continue; // packed rows handled above
           const name = s.name || s.proper; const hip = s.hip ?? s.id;
           if (!name || hip == null) continue;
           const mag = s.mag ?? s.m;
@@ -63,6 +74,12 @@ function loadExtra() {
         }
         if (!Array.isArray(j) && Array.isArray(j.constellations)) { /* constellations.json already covers these */ }
       }
+    } catch {}
+    // Rocket launches (mission, rocket, provider, pad)
+    try {
+      const m = await import('../launches/index.js');
+      await m.loadLaunches();
+      out.push(...m.searchEntries(norm));
     } catch {}
     extra = out; builtFor = -1;
     if (open) update();

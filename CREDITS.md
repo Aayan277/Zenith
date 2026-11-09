@@ -21,3 +21,7 @@ Textures: "Earth" and "Milky Way" maps by Solar System Scope, licensed under
 
 Weather data by [Open-Meteo.com](https://open-meteo.com/), licensed under
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+
+| Font | Use | License |
+|---|---|---|
+| [Space Grotesk](https://fonts.google.com/specimen/Space+Grotesk), [JetBrains Mono](https://fonts.google.com/specimen/JetBrains+Mono) | UI fonts, self-hosted WOFF2 in `assets/fonts/` | SIL OFL 1.1 |

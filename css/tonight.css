@@ -98,9 +98,9 @@
 
 /* Pass list */
 .tn-passlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
-.tn-passlist li { display: grid; grid-template-columns: 64px 1fr auto; gap: 10px; align-items: center; padding: 9px 6px; margin: 0 -6px; border-radius: 8px; cursor: pointer; border-top: 1px solid rgba(150,190,255,.07); transition: background .15s; }
-.tn-passlist li:first-child { border-top: 0; }
-.tn-passlist li:hover, .tn-passlist li:focus-visible { background: rgba(92,225,255,.07); }
+.tn-passlist .tn-pass { display: grid; grid-template-columns: 64px 1fr auto; gap: 10px; align-items: center; padding: 9px 6px; margin: 0 -6px; border-radius: 8px; cursor: pointer; border-top: 1px solid rgba(150,190,255,.07); transition: background .15s; }
+.tn-passlist .tn-pass:first-child { border-top: 0; }
+.tn-passlist .tn-pass:hover, .tn-passlist .tn-pass:focus-visible { background: rgba(92,225,255,.07); }
 .tn-pt { display: flex; flex-direction: column; font-size: 14px; }
 .tn-day { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-faint); }
 .tn-pn { display: flex; flex-direction: column; min-width: 0; }

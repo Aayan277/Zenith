@@ -27,6 +27,24 @@ export function initLayers(bar) {
   const esc = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const fmt = n => n >= 10000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : n.toLocaleString('en-US');
 
+  // Globe overlays owned by js/aurora and js/launches (loaded lazily by main.js).
+  const ext = { aurora: false, launches: true };
+  const overlayMods = { aurora: () => import('../aurora/index.js'), launches: () => import('../launches/index.js') };
+  async function syncOverlays() {
+    try { const a = await overlayMods.aurora(); ext.aurora = a.isAuroraLayerOn(); } catch {}
+    try { const l = await overlayMods.launches(); ext.launches = l.isLaunchLayerOn(); } catch {}
+    if (open) render();
+  }
+  async function toggleOverlay(k) {
+    try {
+      const m = await overlayMods[k]();
+      if (k === 'aurora') m.setAuroraLayerOn(!m.isAuroraLayerOn()); else m.setLaunchLayerOn(!m.isLaunchLayerOn());
+    } catch (e) { console.warn('[layers]', e); }
+    syncOverlays();
+  }
+  state.on('aurora:globe', syncOverlays);
+  state.on('launches:globe', syncOverlays);
+
   function render() {
     const f = state.get('filters');
     const c = counts();
@@ -41,6 +59,11 @@ export function initLayers(bar) {
           <small>Famous, large and bright objects \u2014 <span class="mono hl-n">${fmt(shownCount())}</span> shown</small></span>
         <span class="hl-track"><i></i></span>
       </button>
+      <div class="pop-head hl-head"><span class="eyebrow">On the globe</span></div>
+      <div class="ov-row">
+        <button class="ov-switch${ext.aurora ? ' on' : ''}" data-act="ov-aurora" role="switch" aria-checked="${!!ext.aurora}"><span class="ov-dot" style="--c:#5cffa8"></span>Aurora oval<span class="hl-track"><i></i></span></button>
+        <button class="ov-switch${ext.launches ? ' on' : ''}" data-act="ov-launches" role="switch" aria-checked="${!!ext.launches}"><span class="ov-dot" style="--c:#ff9f5c"></span>Launch pads<span class="hl-track"><i></i></span></button>
+      </div>
       ${notable.length ? `<div class="pop-head hl-head"><span class="eyebrow">Notable</span></div>
       <div class="hl-chips">${notable.map(s => `<button class="hl-chip" data-id="${s.id}" title="${esc(s.name)}">${esc(s.notable)}</button>`).join('')}</div>` : ''}
       <div class="pop-head"><span class="eyebrow">Satellite layers</span>
@@ -56,7 +79,7 @@ export function initLayers(bar) {
   const setOpen = v => {
     open = v;
     btn.setAttribute('aria-expanded', String(v));
-    if (v) { render(); pop.hidden = false; requestAnimationFrame(() => pop.classList.add('show')); }
+    if (v) { syncOverlays(); render(); pop.hidden = false; requestAnimationFrame(() => pop.classList.add('show')); }
     else { pop.classList.remove('show'); setTimeout(() => { if (!open) pop.hidden = true; }, 180); }
   };
 
@@ -68,6 +91,7 @@ export function initLayers(bar) {
       const sel = { kind: 'sat', id: +jump.dataset.id };
       state.set('selection', sel); state.emit('focus', sel);
     } else if (act && act.dataset.act === 'hl') state.set('highlightsOnly', !state.get('highlightsOnly'));
+    else if (act && act.dataset.act.startsWith('ov-')) toggleOverlay(act.dataset.act.slice(3));
     else if (chip) state.patch('filters', { [chip.dataset.cat]: !state.get('filters')[chip.dataset.cat] });
     else if (act) {
       const val = act.dataset.act === 'all';
@@ -78,7 +102,7 @@ export function initLayers(bar) {
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && open) { e.preventDefault(); setOpen(false); btn.focus(); }
   });
-  state.on('filters', () => { open ? render() : (badge.textContent = Object.keys(state.CATEGORIES).filter(k => state.get('filters')[k]).length); });
+  state.on('filters', () => { open ? render() : badge.textContent = Object.keys(state.CATEGORIES).filter(k => state.get('filters')[k]).length; });
   state.on('highlightsOnly', () => open && render());
   state.on('catalogReady', () => open && render());
   render(); // sets badge

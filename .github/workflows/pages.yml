@@ -35,14 +35,25 @@ jobs:
       - name: Assemble site
         run: |
           mkdir -p _site/data/sky
-          cp -r index.html css js assets _site/
-          cp data/sats.json _site/data/
+          cp -r index.html sw.js css js assets _site/
+          cp data/sats.json data/sats-core.json data/launches.json _site/data/
           cp data/sky/sky.json data/sky/constellations.json _site/data/sky/
           touch _site/.nojekyll
       - name: Fetch fresh satellite data
         # If CelesTrak (and the fallback) are down, keep the committed snapshot.
         continue-on-error: true
+        # Writes both _site/data/sats.json and _site/data/sats-core.json.
         run: node scripts/fetch-sats.mjs --out _site/data/sats.json
+      - name: Fetch fresh launch schedule
+        continue-on-error: true
+        run: node scripts/fetch-launches.mjs --out _site/data/launches.json
+      - name: Minify JS and CSS (per file, module structure unchanged)
+        run: |
+          cd _site
+          npx --yes esbuild@0.24.0 $(find js -name '*.js') sw.js --minify --target=es2020 --outdir=. --allow-overwrite --log-level=warning
+          npx --yes esbuild@0.24.0 css/*.css --minify --outdir=css --allow-overwrite --log-level=warning
+      - name: Stamp service worker cache version
+        run: sed -i "s/__BUILD__/${GITHUB_SHA::12}-${GITHUB_RUN_ID}/" _site/sw.js
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
