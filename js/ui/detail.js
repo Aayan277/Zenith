@@ -63,7 +63,7 @@ function header(d, loading) {
 function renderLoading() {
   const s = sel;
   const sat = s.kind === 'sat' ? getSat(s.id) : null;
-  const d = { title: sat?.name || (s.kind === 'body' ? String(s.id) : `${s.kind} ${s.id}`), subtitle: 'Locating…', icon: defaultIcon(s) };
+  const d = { title: sat?.notable || sat?.name || (s.kind === 'body' ? String(s.id) : `${s.kind} ${s.id}`), subtitle: 'Locating…', icon: defaultIcon(s) };
   const k = 'loading|' + d.title;
   if (sig === k) return;
   sig = k;

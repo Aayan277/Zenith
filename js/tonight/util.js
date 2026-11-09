@@ -1,43 +1,21 @@
 // Shared helpers for the Tonight panel: time formatting in the observer's zone, compass, DOM.
+import { fmtLocal, tzLabel } from '../util/time.js';
 export const $ = (sel, root = document) => root.querySelector(sel);
 export const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
 export const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-/** Fallback IANA-ish zone from longitude when the weather API has not told us yet. */
-export function fallbackZone(lon) {
-  const h = Math.round(lon / 15);
-  if (h === 0) return 'UTC';
-  return `Etc/GMT${h > 0 ? '-' : '+'}${Math.abs(h)}`; // Etc/GMT-5 means UTC+5
-}
-const fmtCache = new Map();
-function dtf(tz, opts, key) {
-  const k = tz + '|' + key;
-  let f = fmtCache.get(k);
-  if (!f) {
-    try { f = new Intl.DateTimeFormat('en-GB', { timeZone: tz, ...opts }); }
-    catch { f = new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', ...opts }); }
-    fmtCache.set(k, f);
-  }
-  return f;
-}
-export const fmtTime = (ms, tz) => ms == null ? '—' : dtf(tz, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }, 't').format(ms);
-export const fmtDay = (ms, tz) => dtf(tz, { weekday: 'short', day: 'numeric', month: 'short' }, 'd').format(ms);
-export function zoneAbbr(ms, tz) {
-  let f = fmtCache.get(tz + '|abbr');
-  if (!f) { try { f = new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'short' }); } catch { f = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', timeZoneName: 'short' }); } fmtCache.set(tz + '|abbr', f); }
-  const parts = f.formatToParts(ms);
-  return parts.find(p => p.type === 'timeZoneName')?.value || tz;
-}
-/** Local calendar-day key (YYYY-MM-DD) in zone. */
-export const dayKey = (ms, tz) => dtf(tz, { year: 'numeric', month: '2-digit', day: '2-digit' }, 'k').format(ms);
-/** Local hour 0-23 */
-export const localHour = (ms, tz) => +dtf(tz, { hour: 'numeric', hourCycle: 'h23' }, 'h').format(ms);
+// All zone handling is delegated to js/util/time.js (observer-local, uses state.location.tz).
+export const fmtTime = ms => ms == null ? '—' : fmtLocal(ms, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+export const fmtDay = ms => fmtLocal(ms, { weekday: 'short', day: 'numeric', month: 'short' });
+export const zoneAbbr = ms => tzLabel(ms);
+/** Local calendar-day key in the observer's zone. */
+export const dayKey = ms => fmtLocal(ms, { year: 'numeric', month: '2-digit', day: '2-digit' });
 
-export function relDay(ms, nowMs, tz) {
-  const a = dayKey(ms, tz), b = dayKey(nowMs, tz);
+export function relDay(ms, nowMs) {
+  const a = dayKey(ms), b = dayKey(nowMs);
   if (a === b) return 'Today';
-  if (a === dayKey(nowMs + 86400000, tz)) return 'Tomorrow';
-  return fmtDay(ms, tz);
+  if (a === dayKey(nowMs + 86400000)) return 'Tomorrow';
+  return fmtDay(ms);
 }
 
 /** "2h 14m", "5m 03s", "now" */

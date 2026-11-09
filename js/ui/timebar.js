@@ -1,11 +1,10 @@
 // Time bar: sim clock, LIVE pill, scrubber (-12h..+48h), speed controls, keyboard shortcuts.
 import * as state from '../state.js';
+import { fmtLocal, tzLabel, tzOffsetMinutes } from '../util/time.js';
 import { now, isLive, getRate, setTime, setRate, goLive } from '../clock.js';
 
 const BACK_MIN = 12 * 60, FWD_MIN = 48 * 60, SPAN = BACK_MIN + FWD_MIN;
 const SPEEDS = [1, 60, 600, 3600];
-const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const p2 = n => String(n).padStart(2, '0');
 
 const I = {
@@ -21,7 +20,7 @@ function build() {
   el.classList.add('glass');
   el.innerHTML = `
     <div class="tb-clock">
-      <div class="tb-time mono" id="tb-time">--:--:--</div>
+      <div class="tb-timerow"><span class="tb-time mono" id="tb-time">--:--:--</span><span class="tb-zone mono" id="tb-zone"></span></div>
       <div class="tb-date" id="tb-date"></div>
     </div>
     <div class="tb-status">
@@ -41,7 +40,7 @@ function build() {
       <button class="sp" id="tb-pause" title="Pause / play (Space)" aria-label="Pause">${I.pause}</button>
       ${SPEEDS.map(s => `<button class="sp mono" data-rate="${s}">${s}×</button>`).join('')}
     </div>`;
-  for (const id of ['time', 'date', 'live', 'back', 'track', 'ticks', 'nowmark', 'range', 'offset', 'rev', 'pause']) $[id] = el.querySelector('#tb-' + id);
+  for (const id of ['time', 'zone', 'date', 'live', 'back', 'track', 'ticks', 'nowmark', 'range', 'offset', 'rev', 'pause']) $[id] = el.querySelector('#tb-' + id);
   $.speeds = [...el.querySelectorAll('[data-rate]')];
   $.nowmark.style.left = (BACK_MIN / SPAN * 100) + '%';
 }
@@ -55,12 +54,23 @@ function fmtOffset(m) {
   return (m < 0 ? '−' : '+') + (h ? h + 'h ' : '') + (mm || !h ? p2(mm) + 'm' : '').trim();
 }
 
+const placeName = () => (state.get('location')?.name || '').split(',')[0].trim();
+let lastSec = -1;
 function frame() {
-  const d = new Date(now());
-  const t = `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
-  if (t !== lastClock) { lastClock = t; $.time.textContent = t; }
-  const ds = `${DAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
-  if (ds !== lastDate) { lastDate = ds; $.date.innerHTML = ds + '<span class="tb-tz"> · ' + tzLabel(d) + '</span>'; }
+  const ms = now(), sec = Math.floor(ms / 1000);
+  if (sec !== lastSec) {  // observer-local time, refreshed once per second
+    lastSec = sec;
+    const t = fmtLocal(ms, { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+    if (t !== lastClock) { lastClock = t; $.time.textContent = t; }
+    const ds = fmtLocal(ms, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+    const z = tzLabel(ms), pl = placeName();
+    if (ds + z + pl !== lastDate) {
+      lastDate = ds + z + pl;
+      $.zone.textContent = z;
+      $.date.textContent = '';
+      $.date.append(ds, Object.assign(document.createElement('span'), { className: 'tb-place', textContent: pl ? ' · ' + pl : '' }));
+    }
+  }
   const off = offsetMin();
   if (!dragging) {
     $.range.value = Math.max(0, Math.min(SPAN, Math.round(off + BACK_MIN)));
@@ -68,11 +78,6 @@ function frame() {
     $.offset.textContent = fmtOffset(off);
   }
   requestAnimationFrame(frame);
-}
-
-function tzLabel(d) {
-  const o = -d.getTimezoneOffset(), a = Math.abs(o);
-  return 'UTC' + (o >= 0 ? '+' : '−') + Math.floor(a / 60) + (a % 60 ? ':' + p2(a % 60) : '');
 }
 
 function paintRange() {
@@ -97,12 +102,20 @@ function syncControls() {
 function computeMarks() {
   const loc = state.get('location');
   const start = Date.now() - BACK_MIN * 60000, end = Date.now() + FWD_MIN * 60000;
-  const key = `${loc.lat.toFixed(2)},${loc.lon.toFixed(2)},${Math.floor(Date.now() / 1800000)}`;
+  const key = `${loc.lat.toFixed(2)},${loc.lon.toFixed(2)},${loc.tz || ''},${Math.floor(Date.now() / 1800000)}`;
   if (key === marksKey) return;
   marksKey = key;
   const out = [];
-  const d = new Date(start); d.setHours(24, 0, 0, 0);
-  for (let t = d.getTime(); t < end; ) { out.push({ t, type: 'midnight', label: '00:00' }); const n = new Date(t); n.setDate(n.getDate() + 1); n.setHours(0, 0, 0, 0); t = n.getTime(); }
+  // Local (observer) midnights: shift by the zone offset, floor to day, shift back.
+  const DAY = 86400000;
+  let t = start;
+  for (let guard = 0; guard < 6; guard++) {
+    const off = tzOffsetMinutes(t, loc) * 60000;
+    const mid = Math.floor((t + off) / DAY) * DAY + DAY - off;
+    if (mid >= end) break;
+    out.push({ t: mid, type: 'midnight', label: '00:00' });
+    t = mid + 3600000;
+  }
   const A = window.Astronomy;
   if (A) {
     try {
@@ -112,7 +125,7 @@ function computeMarks() {
         for (let i = 0; i < 5; i++) {
           const r = A.SearchRiseSet(A.Body.Sun, obs, dir, from, 2);
           if (!r || r.date.getTime() > end) break;
-          if (r.date.getTime() >= start) out.push({ t: r.date.getTime(), type, label: `${type === 'sunset' ? 'Sunset' : 'Sunrise'} ${p2(r.date.getHours())}:${p2(r.date.getMinutes())}` });
+          if (r.date.getTime() >= start) out.push({ t: r.date.getTime(), type, label: `${type === 'sunset' ? 'Sunset' : 'Sunrise'} ${fmtLocal(r.date.getTime(), { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })}` });
           from = new Date(r.date.getTime() + 3600000);
         }
       }
@@ -147,6 +160,10 @@ export function init() {
   el = document.getElementById('timebar');
   if (!el) return;
   build();
+  // Publish the real rendered height as --timebar-h so panels/sheets stay clear of the bar.
+  const publish = () => { const h = el.offsetHeight; if (h > 0) document.documentElement.style.setProperty('--timebar-h', h + 'px'); };
+  publish();
+  if (window.ResizeObserver) new ResizeObserver(publish).observe(el); else window.addEventListener('resize', publish);
   syncControls();
   paintRange();
 

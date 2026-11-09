@@ -133,8 +133,10 @@ button:disabled { cursor: default; }
 
 /* ------------------------------------------------------------------ time bar */
 #timebar { position: fixed; z-index: 25; left: 50%; bottom: var(--gutter); transform: translateX(-50%); width: min(960px, calc(100vw - var(--gutter) * 2));
-  height: var(--timebar-h); display: grid; grid-template-columns: auto auto minmax(120px, 1fr) auto; align-items: center; column-gap: 18px; padding: 0 18px; }
+  min-height: 64px; display: grid; grid-template-columns: auto auto minmax(120px, 1fr) auto; align-items: center; column-gap: 18px; padding: 0 18px; }
 .tb-clock { min-width: 128px; }
+.tb-timerow { display: flex; align-items: baseline; gap: 8px; }
+.tb-zone { font-size: 11px; color: var(--text-dim); letter-spacing: .04em; }
 .tb-time { font-size: 24px; font-weight: 500; letter-spacing: -.02em; line-height: 1; }
 .tb-date { margin-top: 4px; font-size: 11.5px; color: var(--text-dim); white-space: nowrap; }
 .tb-status { display: flex; align-items: center; min-width: 96px; }
@@ -191,12 +193,12 @@ button:disabled { cursor: default; }
   .sr-sub { display: none; }
   .search-foot { display: none; }
 
-  #timebar { grid-template-columns: auto 1fr auto; grid-template-areas: "clock status speed" "scrub scrub scrub"; height: var(--timebar-h); row-gap: 2px; column-gap: 10px; padding: 8px 12px 6px; align-content: center; }
+  #timebar { grid-template-columns: auto 1fr auto; grid-template-areas: "clock status speed" "scrub scrub scrub"; min-height: 84px; row-gap: 2px; column-gap: 10px; padding: 8px 12px 6px; align-content: center; }
   .tb-clock { grid-area: clock; min-width: 0; } .tb-status { grid-area: status; min-width: 0; justify-content: flex-start; } .tb-scrub { grid-area: scrub; padding-top: 0; } .tb-speed { grid-area: speed; }
+  .tb-place { display: none; } .tb-zone { font-size: 10px; }
   .tb-time { font-size: 19px; } .tb-date { font-size: 10px; margin-top: 2px; }
-  .tb-tz { display: none; }
   .tb-speed { gap: 1px; }
-  .tb-speed #tb-pause { display: none; }
+  .tb-speed #tb-pause, .tb-speed #tb-rev, .tb-speed [data-rate="600"] { display: none; }
   .sp { min-width: 30px; height: 28px; padding: 0 5px; font-size: 11px; }
   .back-live span { display: none; } .back-live { padding: 0 10px; }
   .live-pill { height: 26px; font-size: 10px; padding: 0 9px 0 8px; }
@@ -209,3 +211,22 @@ button:disabled { cursor: default; }
   .dp-head { padding-top: 20px; }
   .dp-val { font-size: 20px; }
 }
+
+/* --- highlights (globe engineer) --- */
+.hl-switch { display: flex; align-items: center; justify-content: space-between; gap: 14px; width: 100%; padding: 12px 14px; margin-bottom: 14px; text-align: left; cursor: pointer;
+  border-radius: 12px; background: rgba(255,255,255,.03); border: 1px solid var(--glass-border); transition: background .18s, border-color .18s, box-shadow .18s; }
+.hl-switch:hover { border-color: var(--glass-border-hi); }
+.hl-switch.on { background: rgba(255,179,71,.09); border-color: rgba(255,179,71,.5); box-shadow: 0 0 22px rgba(255,179,71,.12); }
+.hl-text { display: grid; gap: 3px; min-width: 0; }
+.hl-text b { font-size: 14px; font-weight: 600; }
+.hl-text small { font-size: 12px; line-height: 1.35; color: var(--text-dim); }
+.hl-n { color: var(--text); }
+.hl-track { flex: none; position: relative; width: 38px; height: 22px; border-radius: 11px; background: rgba(255,255,255,.12); transition: background .2s; }
+.hl-track i { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .2s; }
+.hl-switch.on .hl-track { background: var(--sun); }
+.hl-switch.on .hl-track i { transform: translateX(16px); }
+.hl-head { margin-bottom: 8px; }
+.hl-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; max-height: 100px; overflow: auto; scrollbar-width: thin; scrollbar-color: rgba(150,190,255,.2) transparent; }
+.hl-chip { height: 28px; padding: 0 11px; border-radius: 999px; font-size: 12px; color: var(--text-dim); cursor: pointer;
+  background: rgba(255,255,255,.03); border: 1px solid var(--glass-border); transition: background .18s, border-color .18s, color .18s; }
+.hl-chip:hover { color: var(--text); background: rgba(255,179,71,.10); border-color: rgba(255,179,71,.5); }

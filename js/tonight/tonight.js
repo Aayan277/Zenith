@@ -2,21 +2,27 @@
 import * as state from '../state.js';
 import * as clock from '../clock.js';
 import { fetchWeather } from './weather.js';
+import { learnZone } from '../util/time.js';
 import { sunSequence, darkWindow, moonInfo, moonUpFraction, moonSvg, bodyAlt } from './astro.js';
 import { computeScore, reasonText } from './score.js';
 import { ensurePasses, getPasses } from './passes.js';
 import { fetchKp, assess } from './aurora.js';
 import { openLocationPicker, useMyLocation } from './location.js';
-import { $, esc, clamp, fmtTime, zoneAbbr, relDay, countdown, dur, compass, magDots, magLabel, skeleton, polarSvg, fallbackZone } from './util.js';
+import { $, esc, clamp, fmtTime, zoneAbbr, relDay, countdown, dur, compass, magDots, magLabel, skeleton, polarSvg } from './util.js';
 
 const ctx = {
-  loc: null, tz: 'UTC', tzKnown: false, weather: null, weatherErr: null, weatherPending: true,
+  loc: null, weather: null, weatherErr: null, weatherPending: true,
   seq: null, win: null, moon: null, moonFrac: 0, score: null, reason: '', astroErr: null, computedAt: 0, computedReal: 0,
   passes: null, passesErr: null, passesPending: true, aurora: null, auroraErr: null, auroraPending: true,
   showAllPasses: false,
 };
 let root, token = 0;
 const els = {};
+const HEADLINERS = new Set([25544, 48274, 20580]);
+// The list keeps headliners plus passes bright and high enough to be worth stepping outside for.
+const worthIt = p => HEADLINERS.has(p.satId) || (p.mag <= 0.5 && p.maxEl >= 25);
+const isMobile = () => window.matchMedia('(max-width: 760px)').matches;
+let setSheet = () => {};
 const CHEV = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"/></svg>';
 const PIN = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s7-6.2 7-12a7 7 0 10-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/></svg>';
 const lsGet = k => { try { return localStorage.getItem(k); } catch { return null; } };
@@ -31,6 +37,7 @@ export async function init() {
     <div class="tn-head">
       <button class="tn-handle" type="button" aria-label="Expand or collapse Tonight panel"><span></span></button>
       <span class="eyebrow">Tonight</span>
+      <div class="tn-peek" id="tn-peek" aria-live="off"></div>
       <button class="tn-icon-btn tn-collapse" type="button" aria-label="Collapse panel" aria-expanded="true">${CHEV}</button>
     </div>
     <div class="tn-body scroll">
@@ -46,7 +53,6 @@ export async function init() {
     </div>`;
   for (const id of ['banner', 'loc', 'score', 'iss', 'passes', 'sun', 'cloud', 'aurora']) els[id] = $('#tn-' + id, root);
   setupCollapse();
-  setupInsets();
   ctx.loc = state.get('location');
   els.loc.addEventListener('click', e => { if (e.target.closest('[data-change]')) openLocationPicker(); });
   els.banner.addEventListener('click', onBanner);
@@ -58,7 +64,15 @@ export async function init() {
   els.passes.addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-sat]')) { e.preventDefault(); selectSat(+e.target.dataset.sat); } });
   els.iss.addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target === els.iss) { e.preventDefault(); const p = nextIss(); if (p) selectSat(p.satId); } });
 
-  state.on('location', () => { ctx.loc = state.get('location'); ctx.showAllPasses = false; refreshAll(); });
+  state.on('location', l => {
+    const prev = ctx.loc; ctx.loc = l;
+    // learnZone() patches only `tz`: re-render labels but do not refetch (prevents a loop).
+    if (prev && prev.lat === l.lat && prev.lon === l.lon && prev.name === l.name) { renderAll(); return; }
+    ctx.showAllPasses = false; refreshAll();
+  });
+  state.on('view', () => { if (isMobile()) setSheet(false); });
+  state.on('selection', s => { root.classList.toggle('detail-open', !!s && isMobile()); if (s && isMobile()) setSheet(false); });
+  root.classList.toggle('detail-open', !!state.get('selection') && isMobile());
   state.on('passes', p => { if (p !== ctx.passes) { ctx.passes = p; ctx.passesPending = false; renderIss(); renderPasses(); } });
   setInterval(tick, 1000);
   refreshAll();
@@ -72,34 +86,39 @@ function setupCollapse() {
   const btn = $('.tn-collapse', root), handle = $('.tn-handle', root);
   const mq = window.matchMedia('(max-width: 760px)');
   const set = open => {
+    if (!root) return;
     root.classList.toggle('collapsed', !open);
     btn.setAttribute('aria-expanded', String(open));
     btn.setAttribute('aria-label', open ? 'Collapse panel' : 'Expand panel');
     root.style.removeProperty('--drag');
   };
-  set(!mq.matches); // mobile starts at the peek height
+  setSheet = set;
+  set(!mq.matches); // mobile starts at the compact peek
   btn.addEventListener('click', () => set(root.classList.contains('collapsed')));
   mq.addEventListener('change', () => set(!mq.matches));
-  // Drag / tap on the handle (mobile)
-  let y0 = null, moved = 0, startCollapsed = false;
+  // Drag / tap on the header (mobile). The sheet height follows the finger between peek and expanded.
+  let y0 = null, moved = 0, startCollapsed = false, peekH = 100, fullH = 600, startH = 0;
   const head = $('.tn-head', root);
   head.addEventListener('pointerdown', e => {
     if (!mq.matches || e.target.closest('.tn-collapse')) return;
     y0 = e.clientY; moved = 0; startCollapsed = root.classList.contains('collapsed'); head.setPointerCapture(e.pointerId);
     root.classList.add('dragging');
+    peekH = parseFloat(getComputedStyle(root).getPropertyValue('--peek')) || 100;
+    startH = root.offsetHeight;
+    root.classList.remove('collapsed'); root.style.removeProperty('height'); fullH = root.offsetHeight; // expanded height from CSS
+    if (startCollapsed) root.classList.add('collapsed');
+    root.style.height = startH + 'px';
   });
   head.addEventListener('pointermove', e => {
     if (y0 == null) return;
     moved = e.clientY - y0;
-    const range = root.offsetHeight - parseFloat(getComputedStyle(root).getPropertyValue('--peek') || 300);
-    const off = clamp((startCollapsed ? range : 0) + moved, 0, range);
-    root.style.setProperty('--drag', off + 'px');
+    root.style.height = clamp(startH - moved, peekH, fullH) + 'px';
   });
-  const end = e => {
+  const end = () => {
     if (y0 == null) return;
-    root.classList.remove('dragging');
+    root.classList.remove('dragging'); root.style.removeProperty('height');
     if (Math.abs(moved) < 6) set(startCollapsed); // tap toggles
-    else set(moved < 0 ? true : false);
+    else set(moved < 0);                          // drag up expands, down collapses
     y0 = null;
   };
   head.addEventListener('pointerup', end); head.addEventListener('pointercancel', end);
@@ -108,33 +127,16 @@ function setupCollapse() {
 // tap on handle on mobile without pointer events fallback
 // (pointerup path handles it; click is intentionally not bound to avoid double toggle)
 
-// Keep the panel clear of the real timebar height and size the mobile peek to "score + ISS card".
-function setupInsets() {
-  const tb = document.getElementById('timebar');
-  const apply = () => {
-    if (tb) { const r = tb.getBoundingClientRect(); if (r.height > 0) root.style.setProperty('--tn-bottom', Math.max(0, window.innerHeight - r.top + 8) + 'px'); }
-    if (els.iss && window.innerWidth <= 760) {
-      const peek = clamp(els.iss.offsetTop + els.iss.offsetHeight + 12, 220, window.innerHeight * 0.7);
-      root.style.setProperty('--peek', peek + 'px');
-    }
-  };
-  tick.layout = apply;
-  window.addEventListener('resize', apply);
-  if (tb && window.ResizeObserver) new ResizeObserver(apply).observe(tb);
-  if (window.ResizeObserver) new ResizeObserver(apply).observe(els.iss);
-  apply();
-}
-
 // ---------- data flow ----------
 function refreshAll() {
   const my = ++token, loc = ctx.loc;
   Object.assign(ctx, { weather: null, weatherErr: null, weatherPending: true, passes: null, passesErr: null, passesPending: true,
-    aurora: null, auroraErr: null, auroraPending: true, tz: fallbackZone(loc.lon), tzKnown: false });
+    aurora: null, auroraErr: null, auroraPending: true });
   computeAstro();
   renderAll();
   fetchWeather(loc.lat, loc.lon).then(w => {
     if (my !== token) return;
-    ctx.weather = w; ctx.weatherPending = false; ctx.tz = w.tz; ctx.tzKnown = true;
+    ctx.weather = w; ctx.weatherPending = false; learnZone(w.tz);
     if (w.elevation != null && loc.source !== 'default' && !loc.elevM) { /* keep user's elevation untouched */ }
     computeAstro(); renderAll();
   }).catch(e => { if (my !== token) return; ctx.weatherErr = e; ctx.weatherPending = false; computeAstro(); renderAll(); });
@@ -153,7 +155,7 @@ function computeAstro() {
     ctx.moon = moonInfo(ctx.loc, t);
     ctx.moonFrac = ctx.win ? moonUpFraction(ctx.loc, ctx.win.start, ctx.win.end) : 0;
     ctx.score = computeScore({ hours: ctx.weather?.hours, win: ctx.win, moonFrac: ctx.moonFrac, moon: ctx.moon });
-    ctx.reason = reasonText({ cloud: ctx.score.cloud, moon: ctx.moon, win: ctx.win, tz: ctx.tz, moonFrac: ctx.moonFrac });
+    ctx.reason = reasonText({ cloud: ctx.score.cloud, moon: ctx.moon, win: ctx.win, moonFrac: ctx.moonFrac });
   } catch (e) { console.error('[tonight astro]', e); ctx.astroErr = e; }
 }
 
@@ -191,7 +193,18 @@ async function onBanner(e) {
   try { await useMyLocation(); } catch (err) { state.emit('toast', err && err.code === 1 ? 'Location permission denied. Pick a city instead.' : 'Could not get your location'); els.banner.innerHTML = ''; openLocationPicker(); }
 }
 
+function renderPeek() {
+  const el = $('#tn-peek', root); if (!el) return;
+  const s = ctx.score, pending = ctx.weatherPending;
+  const hue = s ? Math.round(clamp(s.score, 0, 100) * 1.3) : 0, C = 2 * Math.PI * 20;
+  const p = nextIss(), now = clock.now();
+  const iss = ctx.passesPending ? 'ISS pass…' : p ? (now >= p.start ? 'ISS overhead now' : 'ISS in ' + countdown(p.start - now)) : 'No ISS pass soon';
+  el.innerHTML = `<div class="tn-pring"><svg viewBox="0 0 48 48"><circle cx="24" cy="24" r="20" class="trk"/><circle cx="24" cy="24" r="20" class="val" style="stroke:hsl(${hue} 85% 62%);stroke-dasharray:${C.toFixed(1)};stroke-dashoffset:${(C * (1 - (pending || !s ? 0 : s.score) / 100)).toFixed(1)}"/></svg><b class="mono">${pending || !s ? '' : s.score}</b></div>
+    <div class="tn-ptxt"><span class="tn-pword" style="color:hsl(${hue} 85% 68%)">${pending || !s ? 'Tonight' : s.word}</span><span class="tn-piss mono" data-peek-iss>${iss}</span></div>`;
+}
+
 function renderScore() {
+  renderPeek();
   safe(() => {
     if (ctx.astroErr) { els.score.innerHTML = head('Tonight score') + errorBlock('Could not compute sky conditions.'); return; }
     if (!ctx.score) { els.score.innerHTML = head('Tonight score') + skeleton(3); return; }
@@ -235,6 +248,7 @@ function animateRing(from, to, hue, C) {
 function passInfoLine(p) { return `${compass(p.startAz)} → ${compass(p.endAz)}`; }
 
 function renderIss() {
+  renderPeek();
   safe(() => {
     const iss = els.iss;
     if (ctx.passesPending) { iss.innerHTML = head('Next ISS pass') + skeleton(3); iss.removeAttribute('tabindex'); iss.classList.remove('click'); return; }
@@ -242,12 +256,12 @@ function renderIss() {
     const p = nextIss();
     if (!p) { iss.innerHTML = head('Next ISS pass') + `<p class="tn-empty">No visible ISS pass in the next 3 days from here. Passes need a dark sky while the station is still in sunlight.</p>`; iss.classList.remove('click'); return; }
     iss.classList.add('click'); iss.tabIndex = 0; iss.setAttribute('role', 'button');
-    const tz = ctx.tz, now = clock.now();
+    const now = clock.now();
     iss.innerHTML = `${head('Next ISS pass', '<span class="tn-live-dot"></span>ISS')}
       <div class="tn-iss-main">
         <div class="tn-iss-txt">
           <div class="tn-count mono" data-count>${now >= p.start ? 'Overhead now' : 'in ' + countdown(p.start - now)}</div>
-          <div class="tn-when">${relDay(p.start, now, tz)} · <span class="mono">${fmtTime(p.start, tz)} ${zoneAbbr(p.start, tz)}</span></div>
+          <div class="tn-when">${relDay(p.start, now)} · <span class="mono">${fmtTime(p.start)} ${zoneAbbr(p.start)}</span></div>
         </div>
         ${polarSvg(p.track, 88)}
       </div>
@@ -261,6 +275,8 @@ function renderIss() {
   }, els.iss);
 }
 function updateCountdown() {
+  const pk = $('[data-peek-iss]', root), pp = nextIss();
+  if (pk && pp) { const n = clock.now(); pk.textContent = n >= pp.start ? 'ISS overhead now' : 'ISS in ' + countdown(pp.start - n); }
   const c = els.iss && $('[data-count]', els.iss); const p = nextIss();
   if (!c) { return; }
   if (!p) { renderIss(); return; }
@@ -272,16 +288,17 @@ function updateCountdown() {
 function renderPasses() {
   safe(() => {
     const el = els.passes;
-    const right = ctx.tzKnown || ctx.passes ? `Times in ${zoneAbbr(clock.now(), ctx.tz)}` : '';
+    const right = `Times in ${zoneAbbr(clock.now())}`;
     if (ctx.passesPending) { el.innerHTML = head('Upcoming passes', 'next 3 days') + skeleton(4); return; }
     if (ctx.passesErr) { el.innerHTML = head('Upcoming passes') + errorBlock('Could not predict passes.'); return; }
     const now = clock.now(), hero = nextIss();
-    const list = (ctx.passes || []).filter(p => p.end > now && p !== hero);
+    // The worker returns every naked-eye pass (mag <= 4.5); the list keeps the ones worth stepping outside for.
+    const list = (ctx.passes || []).filter(p => p.end > now && p !== hero && worthIt(p));
     if (!list.length) { el.innerHTML = head('Upcoming passes', right) + `<p class="tn-empty">No other visible passes in the next 3 days.</p>`; return; }
     const shown = ctx.showAllPasses ? list : list.slice(0, 6);
     el.innerHTML = head('Upcoming passes', right) + `<ul class="tn-passlist">` + shown.map(p => `
       <li tabindex="0" role="button" data-sat="${p.satId}" aria-label="${esc(p.name)} pass">
-        <div class="tn-pt"><span class="tn-day">${relDay(p.start, now, ctx.tz)}</span><span class="mono">${fmtTime(p.start, ctx.tz)}</span></div>
+        <div class="tn-pt"><span class="tn-day">${relDay(p.start, now)}</span><span class="mono">${fmtTime(p.start)}</span></div>
         <div class="tn-pn"><b>${esc(shortName(p.name))}</b><span>${passInfoLine(p)} · ${dur(p.end - p.start)}</span></div>
         <div class="tn-pe"><span class="mono">${Math.round(p.maxEl)}°</span>${magDots(p.mag)}</div>
       </li>`).join('') + `</ul>` + (list.length > 6 ? `<button class="tn-link tn-more" type="button" data-more>${ctx.showAllPasses ? 'Show fewer' : `Show all ${list.length}`}</button>` : '');
@@ -289,7 +306,7 @@ function renderPasses() {
 }
 const shortName = n => n.replace(/\s*\(.*\)/, m => /ZARYA/.test(m) ? '' : (/TIANHE/.test(m) ? ' Tiangong' : '')).replace('CSS', 'CSS').trim() || n;
 
-function tfmt(ms) { return ms == null ? '—' : `${fmtTime(ms, ctx.tz)}`; }
+function tfmt(ms) { return ms == null ? '—' : `${fmtTime(ms)}`; }
 function renderSun() {
   safe(() => {
     const el = els.sun;
@@ -297,7 +314,7 @@ function renderSun() {
     if (!ctx.seq) { el.innerHTML = head('Sun & Moon') + skeleton(4); return; }
     const s = ctx.seq, m = ctx.moon;
     const rows = [['Sunset', s.sunset, 'sun'], ['Astro dusk', s.dusk, 'dusk'], ['Astro dawn', s.dawn, 'dawn'], ['Sunrise', s.sunrise, 'sun']];
-    el.innerHTML = `${head('Sun & Moon', `Times in ${zoneAbbr(clock.now(), ctx.tz)}`)}
+    el.innerHTML = `${head('Sun & Moon', `Times in ${zoneAbbr(clock.now())}`)}
       <div class="tn-sun-grid">${rows.map(([l, t, k]) => `<div class="tn-sunrow ${k}"><span>${l}</span><b class="mono">${tfmt(t)}</b></div>`).join('')}</div>
       ${s.dusk ? '' : '<p class="tn-note">No full astronomical darkness at this latitude tonight.</p>'}
       <div class="tn-moon-row">
@@ -313,7 +330,7 @@ function renderCloud() {
     const el = els.cloud;
     if (ctx.weatherPending) { el.innerHTML = head('Cloud cover', 'next 12 h') + `<div class="tn-skel" style="height:72px;width:100%"></div>`; return; }
     if (ctx.weatherErr || !ctx.weather) { el.innerHTML = head('Cloud cover') + errorBlock('Cloud forecast is unavailable right now.'); return; }
-    const now = clock.now(), tz = ctx.tz, H = 3600e3;
+    const now = clock.now(), H = 3600e3;
     const base = Math.floor(now / H) * H;
     const byT = new Map(ctx.weather.hours.map(h => [h.t, h]));
     const hrs = [];
@@ -330,12 +347,12 @@ function renderCloud() {
     svg += `<path d="${area(pts)}" class="a-hi"/><path d="${area(low)}" class="a-lo"/>`;
     svg += `<path d="M${pts.map(q => q.join(' ')).join(' L')}" class="ln"/>`;
     hrs.forEach((h, i) => {
-      if (i % 3 === 0) svg += `<text x="${i * bw + 2}" y="${Hh - 3}" class="tx">${fmtTime(h.t, tz).slice(0, 2)}</text>`;
-      svg += `<rect x="${i * bw}" y="0" width="${bw}" height="${Hh - padB}" fill="transparent"><title>${fmtTime(h.t, tz)}: ${h.cloud}% cloud (${h.low}% low)</title></rect>`;
+      if (i % 3 === 0) svg += `<text x="${i * bw + 2}" y="${Hh - 3}" class="tx">${fmtTime(h.t).slice(0, 2)}</text>`;
+      svg += `<rect x="${i * bw}" y="0" width="${bw}" height="${Hh - padB}" fill="transparent"><title>${fmtTime(h.t)}: ${h.cloud}% cloud (${h.low}% low)</title></rect>`;
     });
     svg += '</svg>';
     const avg = Math.round(hrs.reduce((a, h) => a + h.cloud, 0) / hrs.length);
-    el.innerHTML = `${head('Cloud cover', `Next 12 h · ${zoneAbbr(now, tz)}`)}${svg}
+    el.innerHTML = `${head('Cloud cover', `Next 12 h · ${zoneAbbr(now)}`)}${svg}
       <div class="tn-legend"><span><i class="sw hi"></i>Total</span><span><i class="sw lo"></i>Low cloud</span><span><i class="sw ni"></i>Dark hours</span><span class="mono tn-avg">avg ${avg}%</span></div>`;
   }, els.cloud);
 }

@@ -12,15 +12,25 @@ const SKIP = new Set([49044]); // Nauka module is docked to ISS: same object vis
 let worker = null, reqId = 0, current = null, winStart = 0, winEnd = 0, key = '';
 let busy = false;
 
+/** Perigee altitude (km) from the TLE's mean motion and eccentricity. */
+function perigeeKm(s) {
+  const n = parseFloat(s.l2.slice(52, 63)), e = parseFloat('0.' + s.l2.slice(26, 33).trim());
+  if (!(n > 0)) return Infinity;
+  const a = Math.cbrt(398600.4418 / Math.pow(n * 2 * Math.PI / 86400, 2));
+  return a * (1 - e) - 6378.137;
+}
+
 function pickSats() {
   const ids = new Set(BRIGHT_IDS);
   for (const s of allSats()) {
     // 'stations' also holds docked modules, cargo ships and debris: keep only the station cores.
     if (s.cat === 'stations' && /^(ISS|CSS) \((ZARYA|TIANHE)\)/.test(s.name) && !SKIP.has(s.id)) ids.add(s.id);
+    // CelesTrak 'visual' group (bright:true) only when low enough to be seen. `notable` alone is not enough.
+    else if (s.bright === true && perigeeKm(s) < 2000 && !SKIP.has(s.id)) ids.add(s.id);
     else if (s.mag != null && s.mag <= 3) ids.add(s.id);
   }
   return [...ids].map(getSat).filter(Boolean).map(s => ({
-    id: s.id, name: s.name, l1: s.l1, l2: s.l2, std: s.mag != null ? s.mag : (STD[s.id] ?? -0.5) }));
+    id: s.id, name: s.notable || s.name, l1: s.l1, l2: s.l2, std: s.mag != null ? s.mag : (STD[s.id] ?? (s.cat === 'stations' ? -0.5 : 1.0)) }));
 }
 
 export function getPasses() { return current; }
