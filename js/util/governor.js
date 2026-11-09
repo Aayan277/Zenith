@@ -27,12 +27,12 @@ export function idle(fn, timeout = 1500) {
   return setTimeout(() => fn({ timeRemaining: () => 8, didTimeout: true }), 60);
 }
 
-export function createLoop(cb, { interval = () => 0 } = {}) {
+export function createLoop(cb, { interval = () => 0, minInterval = () => 0 } = {}) {
   let raf = 0, timer = 0, running = false, lastRender = 0, wakeUntil = 0;
   function arm() {
     if (!running || raf || timer) return;
     const now = performance.now();
-    const iv = now < wakeUntil ? 0 : interval();
+    const iv = now < wakeUntil ? minInterval() : interval();
     if (iv > 0) {
       const wait = iv - (now - lastRender) - 8;
       if (wait > 4) { timer = setTimeout(() => { timer = 0; raf = requestAnimationFrame(tick); }, wait); return; }

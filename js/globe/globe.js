@@ -27,6 +27,21 @@ const TIERS = [];                         // { dpr, clouds }
 for (const d of [DEVICE_DPR, 1.5, 1]) if (d <= DEVICE_DPR + 1e-6 && !TIERS.some(t => t.dpr === d)) TIERS.push({ dpr: d, clouds: true });
 TIERS.push({ dpr: TIERS[TIERS.length - 1].dpr, clouds: false });
 
+// ---- software rendering (no usable GPU) ----
+// Some machines render WebGL on the CPU (GPU blocklisted, VMs, remote desktops, hardware acceleration off).
+// There a single frame can take ~250 ms and freeze the page, so we render a reduced-resolution globe without
+// clouds, skip the intro flight, and redraw about once a second when nothing is moving. Satellites drift
+// under a pixel per second at 1x anyway. ?quality=high opts out.
+const SOFTWARE_GL_RE = /swiftshader|llvmpipe|softpipe|software|basic render|mesa offscreen/i;
+function detectSoftwareGL(renderer) {
+  try {
+    const gl = renderer.getContext();
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    const name = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+    return SOFTWARE_GL_RE.test(String(name || ''));
+  } catch { return false; }
+}
+
 export async function init() {
   const host = document.getElementById('view-globe');
   if (!host) return;
@@ -45,6 +60,12 @@ export async function init() {
     msg.textContent = 'The 3D orbit view needs WebGL, which is unavailable in this browser. The sky view still works.';
     throw e;
   }
+  const softwareGL = !PIN_QUALITY && detectSoftwareGL(renderer);
+  if (softwareGL) {
+    TIERS.length = 0;
+    TIERS.push({ dpr: 0.6, clouds: false });
+    console.info('[globe] software WebGL detected: low-power rendering');
+  }
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.setClearColor(0x03050a, 1);
   const scene = new THREE.Scene();
@@ -54,8 +75,10 @@ export async function init() {
   controls.enablePan = false; controls.minDistance = 1.12; controls.maxDistance = 14;
   controls.zoomSpeed = 0.7;
   // Created up front (frame/idleInterval are hoisted function declarations) so nothing can reach it before it exists.
-  const loop = createLoop(frame, { interval: idleInterval });
+  let interacting = false;   // declared before the loop so its interval callbacks can read it
+  const loop = createLoop(frame, { interval: idleInterval, minInterval: () => (softwareGL ? (interacting ? 66 : 250) : 0) });
 
+  renderer.userData = { ...(renderer.userData || {}), softwareGL };
   const earth = await createEarth(renderer);   // loads textures
   scene.add(earth.root);
 
@@ -146,7 +169,7 @@ export async function init() {
   function maybeIntro() {
     if (!introPending || !state.get('catalogReady')) return;
     introPending = false;
-    if (state.get('view') !== 'globe' || reducedMotion()) { camera.position.copy(obsDir()).multiplyScalar(homeDist()); return; }
+    if (state.get('view') !== 'globe' || reducedMotion() || softwareGL) { camera.position.copy(obsDir()).multiplyScalar(homeDist()); return; }
     flyTo(obsDir, homeDist(), 4.2);
     fly.ease = easeOutQuart;
   }
@@ -382,7 +405,7 @@ export async function init() {
   // otherwise (at 1x a satellite crosses ~0.5 px/s, and positions are interpolated per frame anyway).
   let offTick = null;
   const satPos = new THREE.Vector3(), issPos = new THREE.Vector3(), hovPos = new THREE.Vector3();
-  let interacting = false, camMoved = false, lastLabels = 0;
+  let camMoved = false, lastLabels = 0;
   controls.addEventListener('start', () => { interacting = true; loop.wake(600); });
   controls.addEventListener('end', () => { interacting = false; loop.wake(900); });
 
@@ -390,6 +413,7 @@ export async function init() {
     return interacting || camMoved || !!fly || sats.fading || Math.abs(getRate()) > 10;
   }
   function idleInterval() {
+    if (softwareGL) return interacting ? 66 : busy() ? 250 : 1000;
     if (busy()) return 0;
     if (Math.abs(getRate()) > 1.5 || selId != null || follow) return 33;
     return 50;
@@ -401,6 +425,7 @@ export async function init() {
   // Sustained > ~20 ms between full-rate frames steps down: pixel ratio 2 -> 1.5 -> 1, then the cloud shell.
   // It steps back up after a cooldown; a failed attempt doubles the cooldown. ?quality=high pins the top tier.
   const cloudMesh = earth.root.children.find(c => c.renderOrder === 1 && c.isMesh);
+  if (cloudMesh) cloudMesh.visible = TIERS[0].clouds;
   const quality = new QualityGovernor(TIERS.length, (t) => {
     tier = t; resize();
     if (cloudMesh) cloudMesh.visible = TIERS[t].clouds;

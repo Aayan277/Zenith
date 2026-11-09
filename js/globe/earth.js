@@ -14,6 +14,7 @@ const wantHiRes = (renderer) => {
   try {
     return matchMedia('(min-width: 900px) and (hover: hover) and (pointer: fine)').matches
       && renderer.capabilities.maxTextureSize >= 4096
+      && !renderer.userData?.softwareGL
       && !lowData() && !(navigator.deviceMemory && navigator.deviceMemory < 4);
   } catch { return false; }
 };
