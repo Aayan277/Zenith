@@ -42,7 +42,8 @@
 @media (max-width: 760px) {
   .globe-btn span { display: none; }
   .globe-btn { padding: 9px 11px; }
-  .globe-controls { bottom: calc(var(--timebar-h) + 14px); }
+  /* Bottom of the screen is taken by the Tonight sheet + timebar on phones. */
+  .globe-controls { top: calc(var(--topbar-h) + 10px); bottom: auto; left: auto; right: var(--gutter); transform: none; flex-direction: column; }
 }
 .globe-fallback { position: absolute; inset: 0; display: grid; place-content: center; padding: 24px; text-align: center; color: var(--text-dim); max-width: 420px; margin: auto; }
 .globe-label.stn { color: #ffd9a0; }
