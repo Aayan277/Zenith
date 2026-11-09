@@ -76,7 +76,7 @@ export async function init() {
   controls.zoomSpeed = 0.7;
   // Created up front (frame/idleInterval are hoisted function declarations) so nothing can reach it before it exists.
   let interacting = false;   // declared before the loop so its interval callbacks can read it
-  const loop = createLoop(frame, { interval: idleInterval, minInterval: () => (softwareGL ? (interacting ? 66 : 250) : 0) });
+  const loop = createLoop(frame, { interval: idleInterval, minInterval: () => (softwareGL ? (interacting ? 66 : 400) : 0) });
 
   renderer.userData = { ...(renderer.userData || {}), softwareGL };
   const earth = await createEarth(renderer);   // loads textures
@@ -413,7 +413,8 @@ export async function init() {
     return interacting || camMoved || !!fly || sats.fading || Math.abs(getRate()) > 10;
   }
   function idleInterval() {
-    if (softwareGL) return interacting ? 66 : busy() ? 250 : 1000;
+    // Software GL: each frame costs ~100 ms of CPU, so idle redraws are rare (dots move only a few px in 4 s at 1x).
+    if (softwareGL) return interacting ? 66 : busy() ? 400 : (Math.abs(getRate()) > 1.5 ? 1000 : 4000);
     if (busy()) return 0;
     if (Math.abs(getRate()) > 1.5 || selId != null || follow) return 33;
     return 50;

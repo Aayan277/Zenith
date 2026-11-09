@@ -155,7 +155,7 @@ function computeAstro() {
     ctx.moon = moonInfo(ctx.loc, t);
     ctx.moonFrac = ctx.win ? moonUpFraction(ctx.loc, ctx.win.start, ctx.win.end) : 0;
     ctx.score = computeScore({ hours: ctx.weather?.hours, win: ctx.win, moonFrac: ctx.moonFrac, moon: ctx.moon });
-    ctx.reason = reasonText({ cloud: ctx.score.cloud, moon: ctx.moon, win: ctx.win, moonFrac: ctx.moonFrac });
+    ctx.reason = reasonText({ cloud: ctx.score.cloud, moon: ctx.moon, win: ctx.win, moonFrac: ctx.moonFrac, checking: !!ctx.weatherPending });
   } catch (e) { console.error('[tonight astro]', e); ctx.astroErr = e; }
 }
 
@@ -221,7 +221,9 @@ function renderScore() {
           <div class="tn-ring-num mono">${pending ? '' : prevScore}</div>
         </div>
         <div class="tn-score-txt">
-          ${pending ? '<div class="tn-skel" style="width:70%;height:22px"></div>' + skeleton(2) : `
+          ${pending ? `<div class="tn-skel" style="width:55%;height:22px"></div>
+          <div class="tn-reason">${esc(ctx.reason)}…</div>
+          <div class="tn-facts mono"><span>☾ ${Math.round(ctx.moon.illum * 100)}%</span><span>● ${ctx.win ? ctx.win.hours.toFixed(1) : 0}h dark</span></div>` : `
           <div class="tn-word" style="color:hsl(${hue} 85% 68%)">${s.word}</div>
           <div class="tn-reason">${esc(ctx.reason)}${noWx ? ' <span class="tn-dim">(forecast offline)</span>' : ''}</div>
           <div class="tn-facts mono">${s.cloud != null ? `<span>☁ ${Math.round(s.cloud)}%</span>` : ''}<span>☾ ${Math.round(ctx.moon.illum * 100)}%</span><span>● ${ctx.win ? ctx.win.hours.toFixed(1) : 0}h dark</span></div>`}

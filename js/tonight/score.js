@@ -31,9 +31,9 @@ export function computeScore({ hours, win, moonFrac, moon }) {
   return { score, word, cloud, vis, moonF, parts: { clear, moonF, length, visF } };
 }
 
-export function reasonText({ cloud, moon, win, moonFrac }) {
+export function reasonText({ cloud, moon, win, moonFrac, checking = false }) {
   const bits = [];
-  if (cloud == null) bits.push('Cloud forecast unavailable');
+  if (cloud == null) bits.push(checking ? 'Checking the cloud forecast' : 'Cloud forecast unavailable');
   else bits.push(cloud < 15 ? 'Clear skies' : cloud < 35 ? 'Mostly clear' : cloud < 60 ? 'Partly cloudy' : cloud < 85 ? 'Mostly cloudy' : 'Overcast');
   if (win) {
     if (moon.illum < 0.08) bits.push('dark Moon');
