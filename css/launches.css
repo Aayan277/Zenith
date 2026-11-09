@@ -67,11 +67,11 @@
   display: flex; align-items: center; gap: 6px; transition: opacity .25s; }
 .lc-label i { width: 6px; height: 6px; border-radius: 50%; background: var(--c); box-shadow: 0 0 8px var(--c); animation: ptPulse 1.6s ease-in-out infinite; }
 .lc-tip { position: absolute; left: 0; top: 0; z-index: 6; pointer-events: none; opacity: 0; will-change: transform; transition: opacity .12s;
-  display: flex; flex-direction: column; gap: 1px; padding: 7px 12px; border-radius: 12px; max-width: 280px; font-size: 12px;
+  display: flex; flex-direction: column; gap: 1px; padding: 7px 12px; border-radius: 12px; max-width: 360px; font-size: 12px;
   background: var(--glass-strong); border: 1px solid var(--glass-border-hi); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); box-shadow: var(--shadow); }
 .lc-tip i { position: absolute; left: 7px; top: 12px; width: 7px; height: 7px; border-radius: 50%; box-shadow: 0 0 8px currentColor; }
 .lc-tip b { font-weight: 600; padding-left: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.lc-tip span { color: var(--text-dim); font-size: 11px; padding-left: 14px; }
+.lc-tip span { color: var(--text-dim); font-size: 11px; padding-left: 14px; white-space: nowrap; }
 #view-globe.lc-hover canvas { cursor: pointer !important; }
 
 @media (max-width: 760px) { .lc-label { font-size: 9.5px; } .lc-cell b { font-size: 21px; } }

@@ -184,7 +184,7 @@ function showTip(p, x, y) {
   const more = p.launches.length - 1;
   tipEl.innerHTML = `<i style="background:${st.color};color:${st.color}"></i><b>${esc(l.rocket)} · ${esc(l.mission)}</b>
     <span>${esc(l.location || l.pad)} · ${l.net - now > 0 ? 'T−' + short(l.net - now) : 'launching'}${more > 0 ? ` · +${more} more` : ''}</span>`;
-  tipEl.style.transform = `translate(${(x + 14).toFixed(0)}px, ${(y + 14).toFixed(0)}px)`;
+  tipEl.style.transform = `translate(${(x + 16).toFixed(0)}px, ${(y + 22).toFixed(0)}px)`;
   tipEl.style.opacity = 1;
   host.classList.add('lc-hover');
 }
