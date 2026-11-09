@@ -4,6 +4,19 @@ import * as THREE from 'three';
 import { sunSceneVec, gmstRad } from './coords.js';
 
 const TEX = 'assets/textures/';
+// First load: 2048x1024 WebP (~0.6 MB total). On capable desktops the day/night maps are upgraded to 4096x1024
+// WebP shortly after the first frame, once the main thread is idle (see upgradeTextures).
+const lowData = () => {
+  const c = navigator.connection;
+  return !!(c && (c.saveData || /(^|-)2g$|3g/.test(c.effectiveType || '')));
+};
+const wantHiRes = (renderer) => {
+  try {
+    return matchMedia('(min-width: 900px) and (hover: hover) and (pointer: fine)').matches
+      && renderer.capabilities.maxTextureSize >= 4096
+      && !lowData() && !(navigator.deviceMemory && navigator.deviceMemory < 4);
+  } catch { return false; }
+};
 
 function loadTexture(loader, file, { srgb, anisotropy = 1, repeatX = false } = {}) {
   return new Promise((resolve, reject) => {
@@ -157,12 +170,14 @@ export async function createEarth(renderer) {
   const loader = new THREE.TextureLoader();
   const aniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
   const [day, night, water, clouds, sky] = await Promise.all([
-    loadTexture(loader, 'earth-day.jpg', { srgb: true, anisotropy: aniso }),
-    loadTexture(loader, 'earth-night.jpg', { srgb: true, anisotropy: aniso }),
-    loadTexture(loader, 'earth-water.png', { srgb: false, anisotropy: 2 }),
-    loadTexture(loader, 'earth-clouds.jpg', { srgb: false, anisotropy: 2, repeatX: true }),
-    loadTexture(loader, 'milkyway.jpg', { srgb: true, anisotropy: 1 }),
+    loadTexture(loader, 'earth-day-2k.webp', { srgb: true, anisotropy: aniso }),
+    loadTexture(loader, 'earth-night-2k.webp', { srgb: true, anisotropy: aniso }),
+    loadTexture(loader, 'earth-water-2k.webp', { srgb: false, anisotropy: 2 }),
+    loadTexture(loader, 'earth-clouds-2k.webp', { srgb: false, anisotropy: 2, repeatX: true }),
+    loadTexture(loader, 'milkyway-2k.webp', { srgb: true, anisotropy: 1 }),
   ]);
+  // CSS fades the canvas in from this marker (css/base.css).
+  document.body.dataset.earth = 'ready';
 
   const root = new THREE.Group();
   const sun = new THREE.Vector3(1, 0, 0);
@@ -215,6 +230,23 @@ export async function createEarth(renderer) {
   glare.scale.set(34, 34, 1);
   glare.renderOrder = -5;
   root.add(glare);
+
+  // Desktop-only upgrade to 4096 px day/night maps, after the page has settled.
+  if (wantHiRes(renderer)) {
+    const uniforms = earth.material.uniforms;
+    const upgrade = async () => {
+      try {
+        const [d, n] = await Promise.all([
+          loadTexture(loader, 'earth-day-4k.webp', { srgb: true, anisotropy: aniso }),
+          loadTexture(loader, 'earth-night-4k.webp', { srgb: true, anisotropy: aniso }),
+        ]);
+        const [od, on] = [uniforms.uDay.value, uniforms.uNight.value];
+        uniforms.uDay.value = d; uniforms.uNight.value = n;
+        od.dispose(); on.dispose();
+      } catch (e) { console.warn('[earth] hi-res textures unavailable', e); }
+    };
+    setTimeout(() => (window.requestIdleCallback ? requestIdleCallback(upgrade, { timeout: 3000 }) : upgrade()), 5000);
+  }
 
   return {
     root, earth, sun,

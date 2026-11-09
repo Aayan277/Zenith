@@ -1,4 +1,18 @@
 /* Design tokens + global base. Every other stylesheet uses these vars. */
+/* Self-hosted variable fonts (SIL OFL; see CREDITS.md): no third-party CSS round trip. */
+@font-face { font-family: 'Space Grotesk'; font-style: normal; font-weight: 400 700; font-display: swap;
+  src: url(../assets/fonts/space-grotesk-latin-ext.woff2) format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: 'Space Grotesk'; font-style: normal; font-weight: 400 700; font-display: swap;
+  src: url(../assets/fonts/space-grotesk-latin.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: 'JetBrains Mono'; font-style: normal; font-weight: 400 500; font-display: swap;
+  src: url(../assets/fonts/jetbrains-mono-latin-ext.woff2) format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: 'JetBrains Mono'; font-style: normal; font-weight: 400 500; font-display: swap;
+  src: url(../assets/fonts/jetbrains-mono-latin.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+
 :root {
   color-scheme: dark;
   --bg: #05070d;
@@ -9,7 +23,7 @@
   --glass-border-hi: rgba(150, 210, 255, 0.32);
   --text: #e8eefc;
   --text-dim: #9aa8c4;
-  --text-faint: #5f6d8a;
+  --text-faint: #7a88a6;
   --accent: #5ce1ff;        /* cyan: primary interactive */
   --accent-2: #a78bff;      /* violet: secondary */
   --sun: #ffb347;           /* amber: ISS, sun, highlights */
@@ -43,6 +57,10 @@ body {
 }
 button { font: inherit; color: inherit; }
 .mono, .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+/* Globe canvas fades in once earth.js has its textures (body[data-earth]); the shell is usable before that. */
+.globe-canvas { opacity: 0; transition: opacity 1.2s ease; }
+body[data-earth="ready"] .globe-canvas { opacity: 1; }
 
 #views, .view { position: fixed; inset: 0; }
 .view { opacity: 0; pointer-events: none; transition: opacity 0.5s ease; }

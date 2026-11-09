@@ -1,0 +1,72 @@
+/* Aurora tab (left panel). Tokens from base.css only. */
+.au-hero { --c: var(--text-dim); position: relative; overflow: hidden; flex: none; border-color: color-mix(in srgb, var(--c) 35%, var(--glass-border));
+  background: radial-gradient(110% 120% at 0% 0%, color-mix(in srgb, var(--c) 16%, transparent), transparent 62%), rgba(255,255,255,.035); }
+.au-hero[data-lvl="good"] { --c: var(--good); background: radial-gradient(110% 130% at 0% 0%, rgba(92,225,165,.2), transparent 60%), radial-gradient(90% 100% at 100% 100%, rgba(216,107,255,.16), transparent 60%), rgba(255,255,255,.035); box-shadow: 0 0 30px rgba(92,225,165,.12); }
+.au-hero[data-lvl="possible"] { --c: var(--warn); }
+.au-hero[data-lvl="unlikely"] { --c: #8da2c8; }
+.au-hero-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.au-hero .eyebrow { color: var(--c); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.au-pill { flex: none; padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; letter-spacing: .03em; color: var(--c); background: color-mix(in srgb, var(--c) 15%, rgba(9,14,27,.6)); border: 1px solid color-mix(in srgb, var(--c) 45%, transparent); }
+.au-verdict { margin: 0; font-size: 19px; font-weight: 600; line-height: 1.2; letter-spacing: -.01em; }
+.au-detail { margin: 6px 0 0; font-size: 13px; color: var(--text-dim); }
+.au-chance { display: flex; align-items: flex-end; gap: 22px; margin: 14px 0 4px; }
+.au-big { font-size: 34px; font-weight: 500; line-height: 1; letter-spacing: -.03em; color: var(--text); }
+.au-hero[data-lvl="good"] .au-big:not(.sm) { color: #b9ffe0; text-shadow: 0 0 18px rgba(92,225,165,.55); }
+.au-big small { font-size: 15px; color: var(--text-dim); margin-left: 1px; }
+.au-big.sm { font-size: 24px; color: var(--text-dim); }
+.au-cl { font-size: 11px; color: var(--text-faint); margin-top: 4px; letter-spacing: .02em; }
+.au-dk { margin-left: auto; align-self: center; font-size: 11px; color: var(--text-faint); padding: 3px 9px; border: 1px solid var(--glass-border); border-radius: 999px; }
+.au-small { margin: 8px 0 0; font-size: 12px; color: var(--text-faint); line-height: 1.45; }
+.au-small.warn { color: var(--warn); }
+
+/* Switch */
+.au-sw { display: inline-flex; align-items: center; gap: 10px; margin-top: 12px; padding: 0; background: none; border: 0; cursor: pointer; color: var(--text-dim); font-size: 13px; border-radius: 999px; }
+.au-sw i { position: relative; width: 36px; height: 20px; flex: none; border-radius: 999px; background: rgba(255,255,255,.1); border: 1px solid var(--glass-border); transition: background .2s, border-color .2s; }
+.au-sw i::after { content: ''; position: absolute; left: 2px; top: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--text-dim); transition: transform .22s cubic-bezier(.2,.8,.2,1), background .2s; }
+.au-sw[aria-checked="true"] { color: var(--text); }
+.au-sw[aria-checked="true"] i { background: rgba(92,225,165,.28); border-color: rgba(92,225,165,.6); }
+.au-sw[aria-checked="true"] i::after { transform: translateX(16px); background: var(--good); box-shadow: 0 0 8px var(--good); }
+.au-sw.sm { margin: 0; }
+.au-sw:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+/* Kp gauge */
+.au-kprow { display: flex; align-items: center; gap: 12px; }
+.au-gauge { width: 148px; height: 92px; flex: none; overflow: visible; }
+.au-gv { font-family: var(--mono); font-size: 30px; font-weight: 500; }
+.au-gl { font-family: var(--mono); font-size: 10px; letter-spacing: .08em; fill: var(--text-dim); text-transform: uppercase; }
+.au-gt { font-family: var(--mono); font-size: 9px; fill: var(--text-faint); }
+.au-wind { min-width: 0; flex: 1; }
+.au-g { font-size: 13px; font-weight: 500; margin-bottom: 8px; }
+.au-wind dl { margin: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
+.au-wind dt { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--text-faint); }
+.au-wind dd { margin: 2px 0 0; font-size: 16px; }
+.au-wind small { font-size: 10px; color: var(--text-faint); }
+.au-bzn { margin-top: 6px; font-size: 11px; color: var(--text-faint); }
+
+/* Forecast chart */
+.au-chart { width: 100%; height: auto; display: block; overflow: visible; }
+.au-chart .night { fill: rgba(167,139,255,.16); }
+.au-chart .g5 { stroke: rgba(255,209,102,.45); stroke-dasharray: 3 3; }
+.au-chart .g0 { stroke: rgba(150,190,255,.18); }
+.au-chart .day { stroke: rgba(150,190,255,.22); stroke-dasharray: 2 3; }
+.au-chart .tx { fill: var(--text-faint); font-size: 8.5px; font-family: var(--mono); }
+
+/* Alerts */
+.au-alerts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.au-alerts li { --c: var(--accent); padding: 9px 10px 9px 12px; border-radius: 8px; background: rgba(255,255,255,.03); border-left: 2px solid var(--c); opacity: .75; }
+.au-alerts li.live { opacity: 1; background: color-mix(in srgb, var(--c) 8%, rgba(255,255,255,.03)); }
+.au-ah { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.au-ah b { font-weight: 600; font-size: 13.5px; color: var(--c); }
+.au-ah span { font-size: 10.5px; color: var(--text-faint); white-space: nowrap; }
+.au-alerts p { margin: 3px 0 0; font-size: 12.5px; color: var(--text-dim); line-height: 1.4; }
+
+/* Alert me */
+.au-me .tn-card-head { margin-bottom: 10px; }
+.au-presets { display: flex; flex-direction: column; gap: 6px; }
+.au-preset { text-align: left; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--glass-border); background: rgba(255,255,255,.03); color: var(--text-dim); font-size: 13px; cursor: pointer; transition: background .2s, border-color .2s, color .2s; display: flex; align-items: center; gap: 10px; }
+.au-preset::before { content: ''; width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid var(--text-faint); flex: none; transition: border-color .2s, background .2s, box-shadow .2s; }
+.au-preset:hover { background: rgba(92,225,255,.07); color: var(--text); }
+.au-preset[aria-checked="true"] { color: var(--text); border-color: rgba(92,225,255,.5); background: rgba(92,225,255,.1); }
+.au-preset[aria-checked="true"]::before { border-color: var(--accent); background: radial-gradient(circle, var(--accent) 38%, transparent 42%); box-shadow: 0 0 8px rgba(92,225,255,.5); }
+.au-preset:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.au-perm { margin-top: 10px; font-size: 13px; padding: 7px 14px; }

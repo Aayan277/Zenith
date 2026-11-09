@@ -64,7 +64,7 @@ See [CREDITS.md](CREDITS.md) for everything else.
 
 `.github/workflows/pages.yml` deploys on every push to `main` and also every 6 hours on a schedule. Each
 deploy runs `scripts/fetch-sats.mjs` to write fresh TLEs straight into the built site, so orbits stay current
-without committing a ~4 MB file to git every few hours. If the fetch fails, the committed `data/sats.json`
+without committing a ~3 MB file to git every few hours. If the fetch fails, the committed `data/sats.json` + `data/sats-core.json`
 snapshot is deployed instead (refresh it occasionally with `node scripts/fetch-sats.mjs`).
 The script refuses to overwrite the catalog with a suspiciously small result.
 

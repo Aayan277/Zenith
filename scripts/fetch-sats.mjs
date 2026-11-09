@@ -1,11 +1,20 @@
 #!/usr/bin/env node
-// Builds data/sats.json from CelesTrak (GP API, TLE format), with a fallback to
-// tle.ivanstanojevic.me. Node 20+, zero dependencies.
+// Builds data/sats.json (full) and data/sats-core.json (~800 sats) from CelesTrak (GP API, TLE format),
+// with a fallback to tle.ivanstanojevic.me. Node 20+, zero dependencies.
 //
 //   node scripts/fetch-sats.mjs [--out data/sats.json] [--allow-small]
 //        [--fallback-only] [--max-pages N] [--max-age-days 30] [--quiet]
+//        [--core-only]   derive sats-core.json from the existing --out file (no network)
 //
-// Output: { generated, source, sats: [{ id, name, cat, l1, l2, bright?, size?, notable? }] }
+// Both outputs share one compact row format (v2), expanded by js/data/catalog.js:
+//   { v: 2, generated, source, core?: true, sats: [[id, name, cat, l1, l2, flags, size, notable?], ...] }
+//   l1, l2   TLE lines without the leading "1 NNNNN" / "2 NNNNN" (re-derived from id; full lines are also accepted)
+//   flags    bitfield: 1 = bright, 2 = notable (display name in row[7])
+//   size     'S' (<0.1 m2) | 'M' (0.1-1 m2) | 'L' (>1 m2), from CelesTrak SATCAT radar cross-section; '' if unknown
+//   notable  display name for a curated list of famous objects / crewed vehicles
+// sats-core.json = stations + notable + bright + size L: what the UI needs for first paint. It is a strict
+// subset of sats.json (same rows), written next to --out as sats-core.json.
+// The old object format ({ sats: [{ id, name, cat, l1, l2, bright?, size?, notable? }] }) is still read.
 //   size    'S' (<0.1 m2) | 'M' (0.1-1 m2) | 'L' (>1 m2), from CelesTrak SATCAT radar cross-section; omitted if unknown
 //   notable display name for a curated list of famous objects / crewed vehicles
 //   --enrich-only  re-apply category cleanup, notable and size to the existing output file (no TLE fetch)
@@ -27,6 +36,8 @@ const OUT = resolve(ROOT, opt('out', 'data/sats.json'));
 const ALLOW_SMALL = flag('allow-small');
 const FALLBACK_ONLY = flag('fallback-only');
 const ENRICH_ONLY = flag('enrich-only');
+const CORE_ONLY = flag('core-only');
+const CORE_OUT = resolve(dirname(OUT), 'sats-core.json');
 const MAX_PAGES = Number(opt('max-pages', 0)) || Infinity;
 const MAX_AGE_DAYS = Number(opt('max-age-days', 30));
 const log = (...a) => { if (!flag('quiet')) console.log(...a); };
@@ -251,6 +262,31 @@ function enrich(sats, sizes, prevSizes) {
   }
   log('  notable:', kept.join(', '));
 }
+// ---- compact row format (v2) --------------------------------------------------
+const F_BRIGHT = 1, F_NOTABLE = 2;
+const isCore = s => s.cat === 'stations' || s.bright || s.notable || s.size === 'L';
+// "1 25544" / "2 25544" is redundant with the id: rows carry the TLE lines without that 7-char prefix (~10% smaller gzip).
+const pad5 = id => String(id).padStart(5, '0');
+const strip = (l, n, id) => (l.startsWith(`${n} ${pad5(id)}`) ? l.slice(7) : l);
+const unstrip = (l, n, id) => (l[0] === String(n) ? l : `${n} ${pad5(id)}${l}`);
+function toRow(s) {
+  const r = [s.id, s.name, s.cat, strip(s.l1, 1, s.id), strip(s.l2, 2, s.id), (s.bright ? F_BRIGHT : 0) | (s.notable ? F_NOTABLE : 0), s.size || ''];
+  if (s.notable) r.push(s.notable);
+  return r;
+}
+function fromRow(r) {
+  const o = { id: r[0], name: r[1], cat: r[2], l1: unstrip(r[3], 1, r[0]), l2: unstrip(r[4], 2, r[0]) };
+  if (r[5] & F_BRIGHT) o.bright = true;
+  if (r[6]) o.size = r[6];
+  if ((r[5] & F_NOTABLE) && r[7]) o.notable = r[7];
+  return o;
+}
+// Reads an existing output file in either format -> { ...meta, sats: [objects] }
+async function readExisting(file = OUT) {
+  const j = JSON.parse(await readFile(file, 'utf8'));
+  if (Array.isArray(j.sats?.[0])) j.sats = j.sats.map(fromRow);
+  return j;
+}
 function packSat(s) {
   const o = { id: s.id, name: s.name, cat: s.cat, l1: s.l1, l2: s.l2 };
   if (s.bright) o.bright = true;
@@ -258,14 +294,29 @@ function packSat(s) {
   if (s.notable) o.notable = s.notable;
   return o;
 }
-async function writeOut(out) {
-  await mkdir(dirname(OUT), { recursive: true });
-  const tmp = OUT + '.tmp';
-  await writeFile(tmp, JSON.stringify(out));
-  await rename(tmp, OUT);
+async function writeJson(file, obj) {
+  await mkdir(dirname(file), { recursive: true });
+  const tmp = file + '.tmp';
+  await writeFile(tmp, JSON.stringify(obj));
+  await rename(tmp, file);
+}
+// out.sats: packed objects. Writes the full file and the core subset.
+async function writeOut(out, { full = true } = {}) {
+  const meta = { v: 2, generated: out.generated, source: out.source };
+  if (full) {
+    await writeJson(OUT, { ...meta, sats: out.sats.map(toRow) });
+    log(`Wrote ${out.sats.length} satellites -> ${OUT}`);
+  }
+  const core = out.sats.filter(isCore);
+  await writeJson(CORE_OUT, { ...meta, core: true, sats: core.map(toRow) });
+  log(`Wrote ${core.length} core satellites -> ${CORE_OUT}`);
+}
+async function coreOnly() {
+  const prev = await readExisting();
+  await writeOut(prev, { full: false });
 }
 async function enrichOnly() {
-  const prev = JSON.parse(await readFile(OUT, 'utf8'));
+  const prev = await readExisting();
   const sizes = await fetchSizes();
   enrich(prev.sats, sizes, null);
   prev.sats = prev.sats.map(packSat);
@@ -275,6 +326,7 @@ async function enrichOnly() {
 
 // ---- main ------------------------------------------------------------------
 async function main() {
+  if (CORE_ONLY) return coreOnly();
   if (ENRICH_ONLY) return enrichOnly();
   let result = null;
   if (!FALLBACK_ONLY) {
@@ -307,7 +359,7 @@ async function main() {
     sats: [],
   };
   let prevSizes = null;
-  try { prevSizes = new Map(JSON.parse(await readFile(OUT, 'utf8')).sats.filter(x => x.size).map(x => [x.id, x.size])); } catch {}
+  try { prevSizes = new Map((await readExisting()).sats.filter(x => x.size).map(x => [x.id, x.size])); } catch {}
   await sleep(DELAY_MS);
   enrich(result.sats, await fetchSizes(), prevSizes);
   out.sats = result.sats.map(packSat);
@@ -315,7 +367,7 @@ async function main() {
 
   // A capped/partial run must not clobber a much bigger existing catalog.
   try {
-    const prev = JSON.parse(await readFile(OUT, 'utf8'));
+    const prev = await readExisting();
     if (prev.sats?.length > out.sats.length * 1.5 && !ALLOW_SMALL) {
       console.error(`Existing file has ${prev.sats.length} sats vs ${out.sats.length} new; keeping existing (use --allow-small to force).`);
       process.exit(1);
@@ -323,7 +375,7 @@ async function main() {
   } catch {}
 
   await writeOut(out);
-  log(`Wrote ${out.sats.length} satellites from ${out.source} -> ${OUT}`);
+  log(`Source: ${out.source}`);
   log('By category:', JSON.stringify(counts));
 }
 

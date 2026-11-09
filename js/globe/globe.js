@@ -5,17 +5,27 @@ import * as state from '../state.js';
 import { CATEGORIES } from '../state.js';
 import { now, getRate } from '../clock.js';
 import { loadCatalog, allSats, getSat, satrec } from '../data/catalog.js';
-import { onTick, requestTick } from '../data/propagator.js';
+import { onTick, requestTick, getTickIntervalMs } from '../data/propagator.js';
+import { createLoop, onVisibility, isHidden, reducedMotion, QualityGovernor } from '../util/governor.js';
 import { latLonToVec } from './coords.js';
 import { createEarth } from './earth.js';
 import { SatLayer } from './sats.js';
 import { SelectedPath, ObserverMarker, makeGraticule, makeRingMarker } from './overlays.js';
 import { registerSatDetail } from './detail.js';
+import * as coords from './coords.js';
+import { attachGlobe, updateLayers, pickLayers } from './plugins.js';
 
 const ISS_ID = 25544;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const easeInOut = (t) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 const easeOutQuart = (t) => 1 - Math.pow(1 - t, 4);
+
+// ---- quality tiers (adaptive): pixel ratio, then the cloud shell. ?quality=high pins the top tier. ----
+const DEVICE_DPR = Math.min(window.devicePixelRatio || 1, 2);
+const PIN_QUALITY = /[?&]quality=(high|max)/.test(location.search);
+const TIERS = [];                         // { dpr, clouds }
+for (const d of [DEVICE_DPR, 1.5, 1]) if (d <= DEVICE_DPR + 1e-6 && !TIERS.some(t => t.dpr === d)) TIERS.push({ dpr: d, clouds: true });
+TIERS.push({ dpr: TIERS[TIERS.length - 1].dpr, clouds: false });
 
 export async function init() {
   const host = document.getElementById('view-globe');
@@ -27,7 +37,8 @@ export async function init() {
   host.append(canvas);
   let renderer;
   try {
-    renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', alpha: false });
+    // MSAA is invisible (and expensive) on hi-dpi targets; the globe limb is shader-smoothed anyway.
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: (window.devicePixelRatio || 1) < 2, powerPreference: 'high-performance', alpha: false });
   } catch (e) {
     canvas.remove();
     const msg = el('div', 'globe-fallback', host);
@@ -42,6 +53,8 @@ export async function init() {
   controls.enableDamping = true; controls.dampingFactor = 0.07;
   controls.enablePan = false; controls.minDistance = 1.12; controls.maxDistance = 14;
   controls.zoomSpeed = 0.7;
+  // Created up front (frame/idleInterval are hoisted function declarations) so nothing can reach it before it exists.
+  const loop = createLoop(frame, { interval: idleInterval });
 
   const earth = await createEarth(renderer);   // loads textures
   scene.add(earth.root);
@@ -74,10 +87,10 @@ export async function init() {
   btnGrid.addEventListener('click', () => { graticule.visible = !graticule.visible; btnGrid.classList.toggle('on', graticule.visible); });
 
   // ---------- sizing ----------
-  let W = 1, H = 1;
+  let W = 1, H = 1, tier = 0;
   function resize() {
     W = Math.max(1, host.clientWidth); H = Math.max(1, host.clientHeight);
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = TIERS[tier].dpr;
     renderer.setPixelRatio(dpr);
     renderer.setSize(W, H, false);
     camera.aspect = W / H; camera.updateProjectionMatrix();
@@ -91,13 +104,15 @@ export async function init() {
 
   // ---------- camera animation ----------
   const tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3(), tmpC = new THREE.Vector3();
-  const qTmp = new THREE.Quaternion();
+  const qTmp = new THREE.Quaternion(), qId = new THREE.Quaternion(), qStep = new THREE.Quaternion();
   let fly = null;
   const homeDist = () => 3.2 * Math.max(1, 0.85 / camera.aspect);
   const obsDir = () => { const l = state.get('location'); return latLonToVec(l.lat, l.lon, 1, new THREE.Vector3()); };
 
   /** targetFn() returns a unit-ish Vector3 (re-evaluated every frame so moving targets work). */
   function flyTo(targetFn, dist, dur = 1.6) {
+    if (reducedMotion()) dur = 0.001;           // prefers-reduced-motion: jump, do not glide
+    loop.wake(dur * 1000 + 300);
     fly = { t0: performance.now(), dur: dur * 1000, fromDir: camera.position.clone().normalize(),
             fromDist: camera.position.length(), toDist: dist, targetFn };
   }
@@ -111,8 +126,8 @@ export async function init() {
     tmpA.copy(to).normalize();
     qTmp.setFromUnitVectors(fly.fromDir, tmpA);
     // slerp from identity to full rotation by k
-    const q = new THREE.Quaternion().slerp(qTmp, k);
-    tmpB.copy(fly.fromDir).applyQuaternion(q);
+    qStep.copy(qId).slerp(qTmp, k);
+    tmpB.copy(fly.fromDir).applyQuaternion(qStep);
     // keep the camera from flipping over the poles
     tmpB.y = clamp(tmpB.y, -0.985, 0.985); tmpB.normalize();
     const dist = fly.fromDist + (fly.toDist - fly.fromDist) * k;
@@ -131,7 +146,7 @@ export async function init() {
   function maybeIntro() {
     if (!introPending || !state.get('catalogReady')) return;
     introPending = false;
-    if (state.get('view') !== 'globe') { camera.position.copy(obsDir()).multiplyScalar(homeDist()); return; }
+    if (state.get('view') !== 'globe' || reducedMotion()) { camera.position.copy(obsDir()).multiplyScalar(homeDist()); return; }
     flyTo(obsDir, homeDist(), 4.2);
     fly.ease = easeOutQuart;
   }
@@ -154,8 +169,9 @@ export async function init() {
   function satDir(id) {
     const i = sats.idToIndex.get(id);
     if (i === undefined || !sats.posOf(i, tmpC)) return null;
-    return tmpC.clone().normalize();
+    return dirOut.copy(tmpC).normalize();
   }
+  const dirOut = new THREE.Vector3(), tV = new THREE.Vector3(), tN = new THREE.Vector3();
   /** Camera target that sits ~20 deg off the orbital plane so the orbit reads as an ellipse, not an edge-on line. */
   function satTarget(id) {
     const i = sats.idToIndex.get(id);
@@ -173,8 +189,8 @@ export async function init() {
       if (!side) return d;
       // re-derive the normal from the current velocity so the offset follows the orbit
       const k = sats.idToIndex.get(id), j = k * 3, nx = sats.next, pv = sats.prev;
-      const v = new THREE.Vector3(nx[j] - pv[j], nx[j + 1] - pv[j + 1], nx[j + 2] - pv[j + 2]);
-      const nn = new THREE.Vector3().crossVectors(d, v);
+      const v = tV.set(nx[j] - pv[j], nx[j + 1] - pv[j + 1], nx[j + 2] - pv[j + 2]);
+      const nn = tN.crossVectors(d, v);
       if (nn.lengthSq() < 1e-12) return d;
       nn.normalize().multiplyScalar(side * Math.sign(sats.tNext - sats.tPrev || 1));
       return d.multiplyScalar(Math.cos(0.35)).addScaledVector(nn, Math.sin(0.35)).normalize();
@@ -222,45 +238,54 @@ export async function init() {
   btnHome.addEventListener('click', () => flyTo(obsDir, Math.min(homeDist(), Math.max(camera.position.length(), 2.0)) , 1.6));
 
   // ---------- catalog + ticks ----------
-  let pendingTick = null, needSnap = true, lastSim = now(), lastReal = performance.now();
+  // The propagator hands out ticks for a slot table (tick.ids). When the catalog grows (core -> full) the table
+  // changes identity: the layer is rebuilt, carrying over positions of sats it already had (matched by id).
+  let needSnap = true, lastSim = now(), lastReal = performance.now(), firstSlots = true;
+  function adoptSlots(ids) {
+    sats.setSlots(ids, getSat);
+    selIdx = selId != null && sats.idToIndex.has(selId) ? sats.idToIndex.get(selId) : -1;
+    hoverIdx = -1; hasSelBox = null;
+    if (firstSlots) { firstSlots = false; const sel = state.get('selection'); if (sel) onSelection(sel); }
+    loop.wake(900);                                  // new dots fade in
+  }
   function handleTick(tick) {
-    if (!sats.n) { pendingTick = tick; return; }
-    const spacing = Math.abs(getRate()) * 100;
+    if (tick.ids !== sats.ids) adoptSlots(tick.ids);
+    const interval = Math.abs(getRate()) * getTickIntervalMs();
     const gap = Math.abs(tick.time - sats.tNext);
-    const snap = needSnap || (sats.haveTick && gap > spacing * 8 + 2500);
+    const snap = needSnap || (sats.haveTick && gap > interval * 8 + 2500);
     needSnap = false;
     sats.applyTick(tick, snap);
   }
-  loadCatalog().then(() => {
-    sats.setCatalog(allSats());
-    sats.setFilters(state.get('filters'));
-    sats.setHighlightsOnly(state.get('highlightsOnly'));
-    if (pendingTick) { const t = pendingTick; pendingTick = null; handleTick(t); }
-    const sel = state.get('selection'); if (sel) onSelection(sel);
-    maybeIntro();
-  }).catch(() => {});
+  loadCatalog().then(() => { maybeIntro(); }).catch(() => {});
 
   // ---------- picking ----------
   let pointer = { x: -1, y: -1, inside: false, moved: false };
-  let down = null, hoverIdx = -1;
+  let down = null, hoverIdx = -1, lastPick = 0;
   const rect = () => canvas.getBoundingClientRect();
   canvas.addEventListener('pointermove', (e) => {
     const r = rect(); pointer.x = e.clientX - r.left; pointer.y = e.clientY - r.top; pointer.inside = true; pointer.moved = true;
+    loop.wake(250);
   });
   canvas.addEventListener('pointerleave', () => { pointer.inside = false; pointer.moved = true; });
-  canvas.addEventListener('pointerdown', (e) => { down = { x: e.clientX, y: e.clientY, t: performance.now(), btn: e.button }; });
+  canvas.addEventListener('wheel', () => loop.wake(1200), { passive: true });
+  canvas.addEventListener('pointerdown', (e) => { loop.wake(600); down = { x: e.clientX, y: e.clientY, t: performance.now(), btn: e.button }; });
   canvas.addEventListener('pointerup', (e) => {
     if (!down || down.btn !== 0) { down = null; return; }
     const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y), dt = performance.now() - down.t;
     down = null;
     if (moved > 5 || dt > 600) return;
     const r = rect();
+    const claimed = pickLayers(e.clientX - r.left, e.clientY - r.top);
+    if (claimed) { state.set('selection', claimed); return; }
     const i = sats.pick(e.clientX - r.left, e.clientY - r.top, camera, W, H, 12);
     if (i >= 0) state.set('selection', { kind: 'sat', id: sats.list[i].id });
     else if (state.get('selection')?.kind === 'sat') state.set('selection', null);
   });
   function updateHover() {
     if (!pointer.moved) return;
+    const tNow = performance.now();
+    if (tNow - lastPick < 30 && !down) return;     // pick scans every sat: at most ~30 Hz
+    lastPick = tNow;
     pointer.moved = false;
     if (down || !pointer.inside) { hoverIdx = -1; }
     else hoverIdx = sats.pick(pointer.x, pointer.y, camera, W, H, 10);
@@ -303,53 +328,84 @@ export async function init() {
   }
 
   // ---------- notable labels (declutter by zoom + screen collisions) ----------
+  // Candidate storage is preallocated: this runs every frame while the camera moves.
   const lp = new THREE.Vector3(), lscr = { x: 0, y: 0 };
+  let cX = new Float32Array(256), cY = new Float32Array(256), cI = new Int32Array(256), cP = new Uint8Array(256);
+  const boxes = new Float32Array(4 * 64);
   function placeNotableLabels(dist) {
     const budget = dist > 7 ? 5 : dist > 4.5 ? 8 : dist > 3.2 ? 14 : dist > 2.2 ? 22 : 40;
-    const cands = [];
-    const filters = state.get('filters');
-    for (const i of sats.notable) {
+    const notable = sats.notable;
+    if (cX.length < notable.length) { const m = notable.length + 64; cX = new Float32Array(m); cY = new Float32Array(m); cI = new Int32Array(m); cP = new Uint8Array(m); }
+    let nc = 0;
+    for (let q = 0; q < notable.length; q++) {
+      const i = notable[q];
       if (!sats.visible[sats.catIdx[i]] || (sats.highlightsOnly && !sats.hl[i])) continue;
-      if (sats.list[i].id === selId) continue;
+      const s = sats.list[i];
+      if (s.id === selId) continue;
       if (!sats.posOf(i, lp)) continue;
       if (!toScreen(lp, lscr) || lscr.x < 0 || lscr.x > W || lscr.y < 0 || lscr.y > H || occluded(lp)) continue;
-      const s = sats.list[i];
-      // priority: ISS, then stations/vehicles, then everything else
-      const pr = s.id === ISS_ID ? 0 : s.cat === 'stations' ? 1 : 2;
-      cands.push({ x: lscr.x, y: lscr.y, name: s.notable, id: s.id, cat: s.cat, pr });
+      cX[nc] = lscr.x; cY[nc] = lscr.y; cI[nc] = i;
+      cP[nc] = s.id === ISS_ID ? 0 : s.cat === 'stations' ? 1 : 2;     // ISS, then stations/vehicles, then the rest
+      nc++;
     }
-    cands.sort((a, b) => a.pr - b.pr);
-    const boxes = [];
-    if (selLabel.style.opacity === '1' && hasSelBox) boxes.push(hasSelBox);
+    let nb = 0;
+    if (selLabel.style.opacity === '1' && hasSelBox) { boxes[0] = hasSelBox.x; boxes[1] = hasSelBox.y; boxes[2] = hasSelBox.w; boxes[3] = hasSelBox.h; nb = 1; }
     let used = 0;
-    for (const c of cands) {
-      if (used >= budget) break;
-      const w = c.name.length * 7.2 + 26, h = 16;
-      const bx = c.x + 6, by = c.y - 22;
-      let hit = false;
-      for (const b of boxes) if (bx < b.x + b.w && bx + w > b.x && by < b.y + b.h && by + h > b.y) { hit = true; break; }
-      if (hit) continue;
-      boxes.push({ x: bx, y: by, w, h });
-      let d = labelPool[used];
-      if (!d) { d = el('div', 'globe-label', host); labelPool[used] = d; }
-      if (d.dataset.n !== c.name) { d.textContent = c.name; d.dataset.n = c.name; }
-      d.classList.toggle('iss', c.pr === 0); d.classList.toggle('stn', c.pr === 1);
-      d.style.transform = `translate(${c.x + 14}px, ${c.y - 26}px)`;
-      d.style.opacity = 1;
-      used++;
+    for (let pr = 0; pr < 3 && used < budget; pr++) {
+      for (let c = 0; c < nc && used < budget; c++) {
+        if (cP[c] !== pr) continue;
+        const name = sats.list[cI[c]].notable;
+        const w = name.length * 7.2 + 26, h = 16;
+        const bx = cX[c] + 6, by = cY[c] - 22;
+        let hit = false;
+        for (let b = 0; b < nb; b++) { const o = b * 4; if (bx < boxes[o] + boxes[o + 2] && bx + w > boxes[o] && by < boxes[o + 1] + boxes[o + 3] && by + h > boxes[o + 1]) { hit = true; break; } }
+        if (hit) continue;
+        if (nb < 64) { const o = nb * 4; boxes[o] = bx; boxes[o + 1] = by; boxes[o + 2] = w; boxes[o + 3] = h; nb++; }
+        let d = labelPool[used];
+        if (!d) { d = el('div', 'globe-label', host); labelPool[used] = d; labelOp[used] = 0; }
+        if (d.dataset.n !== name) { d.textContent = name; d.dataset.n = name; }
+        d.classList.toggle('iss', pr === 0); d.classList.toggle('stn', pr === 1);
+        d.style.transform = `translate(${cX[c] + 14}px, ${cY[c] - 26}px)`;
+        if (labelOp[used] !== 1) { d.style.opacity = 1; labelOp[used] = 1; }
+        used++;
+      }
     }
-    for (let k = used; k < labelPool.length; k++) labelPool[k].style.opacity = 0;
+    for (let k = used; k < labelPool.length; k++) if (labelOp[k] !== 0) { labelPool[k].style.opacity = 0; labelOp[k] = 0; }
   }
+  const labelOp = [];
   let hasSelBox = null;
 
   // ---------- render loop ----------
-  let raf = 0, offTick = null, last = performance.now(), hideTimer = 0;
+  // Full rate (60 fps) while the camera moves, a fly-to runs, the user interacts or the sim runs fast; ~20-30 fps
+  // otherwise (at 1x a satellite crosses ~0.5 px/s, and positions are interpolated per frame anyway).
+  let offTick = null;
   const satPos = new THREE.Vector3(), issPos = new THREE.Vector3(), hovPos = new THREE.Vector3();
-  const prevFollowDir = new THREE.Vector3();
+  let interacting = false, camMoved = false, lastLabels = 0;
+  controls.addEventListener('start', () => { interacting = true; loop.wake(600); });
+  controls.addEventListener('end', () => { interacting = false; loop.wake(900); });
 
-  function frame(ts) {
-    raf = requestAnimationFrame(frame);
-    const dt = Math.min(0.1, (ts - last) / 1000); last = ts;
+  function busy() {
+    return interacting || camMoved || !!fly || sats.fading || Math.abs(getRate()) > 10;
+  }
+  function idleInterval() {
+    if (busy()) return 0;
+    if (Math.abs(getRate()) > 1.5 || selId != null || follow) return 33;
+    return 50;
+  }
+  const pluginRoot = new THREE.Group(); pluginRoot.name = 'plugins'; scene.add(pluginRoot);
+  attachGlobe({ THREE, scene, camera, renderer, root: pluginRoot, coords, host, requestRender: (ms = 300) => loop.wake(ms) });
+
+  // ---------- adaptive quality ----------
+  // Sustained > ~20 ms between full-rate frames steps down: pixel ratio 2 -> 1.5 -> 1, then the cloud shell.
+  // It steps back up after a cooldown; a failed attempt doubles the cooldown. ?quality=high pins the top tier.
+  const cloudMesh = earth.root.children.find(c => c.renderOrder === 1 && c.isMesh);
+  const quality = new QualityGovernor(TIERS.length, (t) => {
+    tier = t; resize();
+    if (cloudMesh) cloudMesh.visible = TIERS[t].clouds;
+  }, { pinned: PIN_QUALITY, name: 'globe' });
+
+  let lastCamX = 0, lastCamY = 0, lastCamZ = 0, lastQ = 0, lastQy = 0, lastQz = 0, lastQw = 1;
+  function frame(ts, dt) {
     const simMs = now();
 
     // time-jump detection (scrubbing, go-live, rate flips)
@@ -380,61 +436,80 @@ export async function init() {
     const dist = camera.position.length();
     controls.rotateSpeed = 0.18 + 0.62 * clamp((dist - 1.12) / 2.6, 0, 1);
     controls.update();
+    const cp = camera.position, cq = camera.quaternion;
+    const moved = Math.abs(cp.x - lastCamX) + Math.abs(cp.y - lastCamY) + Math.abs(cp.z - lastCamZ) > 2e-5 * dist
+      || Math.abs(cq.x - lastQ) + Math.abs(cq.y - lastQy) + Math.abs(cq.z - lastQz) + Math.abs(cq.w - lastQw) > 2e-5;
+    lastCamX = cp.x; lastCamY = cp.y; lastCamZ = cp.z; lastQ = cq.x; lastQy = cq.y; lastQz = cq.z; lastQw = cq.w;
+    // follow mode drifts the camera ~1 px/s: that alone must not pin the loop at full rate
+    camMoved = moved && !(follow && !fly && !interacting);
+    if (camMoved) loop.wake(160);                    // let OrbitControls' damping finish at full rate
 
     // markers
     const tSec = ts / 1000;
     selMarker.visible = !!hasSel;
     if (hasSel) {
-      selMarker.geometry.attributes.position.array.set([satPos.x, satPos.y, satPos.z]);
-      selMarker.geometry.attributes.position.needsUpdate = true;
-      selMarker.material.uniforms.uTime.value = tSec;
+      const a = selMarker.geometry.attributes.position; a.array[0] = satPos.x; a.array[1] = satPos.y; a.array[2] = satPos.z;
+      a.needsUpdate = true;
+      selMarker.material.uniforms.uTime.value = reducedMotion() ? 0.3 : tSec;
     }
     issMarker.visible = !!hasIss && !(hasSel && selId === ISS_ID);
     if (hasIss) {
-      issMarker.geometry.attributes.position.array.set([issPos.x, issPos.y, issPos.z]);
-      issMarker.geometry.attributes.position.needsUpdate = true;
+      const a = issMarker.geometry.attributes.position; a.array[0] = issPos.x; a.array[1] = issPos.y; a.array[2] = issPos.z;
+      a.needsUpdate = true;
     }
     if (hoverIdx >= 0 && sats.posOf(hoverIdx, hovPos)) {
       hoverMarker.visible = true;
-      hoverMarker.geometry.attributes.position.array.set([hovPos.x, hovPos.y, hovPos.z]);
-      hoverMarker.geometry.attributes.position.needsUpdate = true;
+      const a = hoverMarker.geometry.attributes.position; a.array[0] = hovPos.x; a.array[1] = hovPos.y; a.array[2] = hovPos.z;
+      a.needsUpdate = true;
     } else hoverMarker.visible = false;
 
     path.update(simMs, hasSel ? satPos : null, camera, renderer.getPixelRatio());
-    observer.update(tSec, dist);
+    observer.update(reducedMotion() ? 0 : tSec, dist);
 
     // hover (after camera moved so the pick matches what is on screen)
     camera.updateMatrixWorld();
     updateHover();
+    updateLayers(simMs, dt * 1000);
     renderer.render(scene, camera);
 
-    // labels
-    placeNotableLabels(dist);
-    if (hasSel) { place(selLabel, satPos, 18, -26); hasSelBox = selLabel.style.opacity === '1' ? { x: scr.x + 12, y: scr.y - 30, w: selLabel.textContent.length * 8 + 26, h: 18 } : null; }
-    else { selLabel.style.opacity = 0; hasSelBox = null; }
+    // labels: DOM writes are throttled to ~5 Hz while nothing moves
+    const tNow = performance.now();
+    if (camMoved || fly || interacting || tNow - lastLabels > 200) {
+      lastLabels = tNow;
+      placeNotableLabels(dist);
+      if (hasSel) { place(selLabel, satPos, 18, -26); hasSelBox = selLabel.style.opacity === '1' ? { x: scr.x + 12, y: scr.y - 30, w: selLabel.textContent.length * 8 + 26, h: 18 } : null; }
+      else { selLabel.style.opacity = 0; hasSelBox = null; }
+    }
     placeTip();
+    quality.sample(ts, busy());
   }
 
   function start() {
-    if (raf) return;
-    clearTimeout(hideTimer);
-    last = performance.now(); lastReal = last; lastSim = now(); needSnap = true;
+    if (loop.running || isHidden()) return;
+    lastSim = now(); lastReal = performance.now(); needSnap = true; quality.reset();
     offTick = onTick(handleTick);
-    raf = requestAnimationFrame(frame);
+    loop.start();
   }
   function stop() {
-    cancelAnimationFrame(raf); raf = 0;
+    loop.stop();
     if (offTick) { offTick(); offTick = null; }
   }
+  let hideTimer = 0;
   state.on('view', (v) => {
+    clearTimeout(hideTimer);
     if (v === 'globe') start();
-    else { clearTimeout(hideTimer); hideTimer = setTimeout(() => { if (state.get('view') !== 'globe') stop(); }, 700); }
+    else hideTimer = setTimeout(() => { if (state.get('view') !== 'globe') stop(); }, 700);
+  });
+  // Hidden tab: no rAF, no worker ticks. Resume (with a position snap) when it is visible again.
+  onVisibility((hidden) => {
+    if (hidden) stop();
+    else if (state.get('view') === 'globe') start();
   });
   if (state.get('view') === 'globe') start();
   maybeIntro();
 
   // handy for tests / debugging
-  window.__globe = { THREE, scene, camera, controls, sats, path, renderer, flyTo, api, earth, get fly() { return fly; }, obsDir };
+  window.__globe = { THREE, scene, camera, controls, sats, path, renderer, flyTo, api, earth, loop, get fly() { return fly; }, get tier() { return tier; }, quality, obsDir };
 }
 
 function el(tag, cls, parent) {

@@ -33,11 +33,11 @@ export async function init() {
       <button role="tab" data-view="sky" aria-selected="false">Sky</button>
     </div>
     <div class="tb-right">
-      <button class="tb-btn glass tb-search" id="btn-search" aria-label="Search (${kbd})">
+      <button class="tb-btn glass tb-search" id="btn-search">
         ${ICON.search}<span class="tb-label">Search</span><kbd class="kbd">${kbd}</kbd>
       </button>
       <div class="tb-layers-wrap">
-        <button class="tb-btn glass" id="btn-layers" aria-haspopup="true" aria-expanded="false" aria-label="Layers">
+        <button class="tb-btn glass" id="btn-layers" aria-haspopup="true" aria-expanded="false">
           ${ICON.layers}<span class="tb-label">Layers</span><span class="tb-badge" id="layers-badge"></span>
         </button>
         <div class="popover glass" id="layers-pop" role="dialog" aria-label="Layers" hidden></div>
@@ -66,6 +66,20 @@ export async function init() {
   initSearch();
   bar.querySelector('#btn-search').addEventListener('click', () => openSearch());
   initLayers(bar);
+
+  // Accessible names: on wide screens the visible text ("Search Ctrl K", "Layers 9") is the name, so it always
+  // matches what is shown. When the text labels are hidden (compact layout) the buttons need explicit labels.
+  {
+    const mqS = matchMedia('(max-width: 1100px)'), mqL = matchMedia('(max-width: 760px)');
+    const sBtn = bar.querySelector('#btn-search'), lBtn = bar.querySelector('#btn-layers'), badge = bar.querySelector('#layers-badge');
+    const sync = () => {
+      if (mqS.matches) sBtn.setAttribute('aria-label', 'Search'); else sBtn.removeAttribute('aria-label');
+      if (mqL.matches) lBtn.setAttribute('aria-label', `Layers ${badge.textContent}`.trim()); else lBtn.removeAttribute('aria-label');
+    };
+    mqS.addEventListener('change', sync); mqL.addEventListener('change', sync);
+    new MutationObserver(sync).observe(badge, { childList: true, characterData: true, subtree: true });
+    sync();
+  }
 
   // detail panel + time bar (isolated so one failing doesn't stop the other)
   for (const name of ['detail', 'timebar']) {

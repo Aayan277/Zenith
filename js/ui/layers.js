@@ -78,7 +78,7 @@ export function initLayers(bar) {
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && open) { e.preventDefault(); setOpen(false); btn.focus(); }
   });
-  state.on('filters', () => { open ? render() : (badge.textContent = Object.keys(state.CATEGORIES).filter(k => state.get('filters')[k]).length); });
+  state.on('filters', () => { open ? render() : badge.textContent = Object.keys(state.CATEGORIES).filter(k => state.get('filters')[k]).length; });
   state.on('highlightsOnly', () => open && render());
   state.on('catalogReady', () => open && render());
   render(); // sets badge

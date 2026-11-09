@@ -6,10 +6,30 @@
   <title>Zenith</title>
   <meta name="description" content="Live satellites, stars and planets above you. See what's overhead tonight." />
   <meta name="theme-color" content="#05070d" />
+  <link rel="canonical" href="https://aayan277.github.io/Zenith/" />
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
+
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Zenith" />
+  <meta property="og:title" content="Zenith: live satellites, stars and planets above you" />
+  <meta property="og:description" content="A 3D globe of 18,000+ satellites, a live sky map and what is visible overhead tonight. No install, no account." />
+  <meta property="og:url" content="https://aayan277.github.io/Zenith/" />
+  <meta property="og:image" content="https://aayan277.github.io/Zenith/assets/og.jpg" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="The Earth at night with satellite orbits, from Zenith" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Zenith: live satellites, stars and planets above you" />
+  <meta name="twitter:description" content="A 3D globe of 18,000+ satellites, a live sky map and what is visible overhead tonight." />
+  <meta name="twitter:image" content="https://aayan277.github.io/Zenith/assets/og.jpg" />
+
+  <!-- Self-hosted fonts (see css/base.css). Only the two latin files used above the fold are preloaded. -->
+  <link rel="preload" href="assets/fonts/space-grotesk-latin.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="assets/fonts/jetbrains-mono-latin.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+  <link rel="preconnect" href="https://services.swpc.noaa.gov" crossorigin />
+  <link rel="preconnect" href="https://api.open-meteo.com" crossorigin />
 
   <link rel="stylesheet" href="css/base.css" />
   <link rel="stylesheet" href="css/shell.css" />
@@ -17,15 +37,44 @@
   <link rel="stylesheet" href="css/sky.css" />
   <link rel="stylesheet" href="css/tonight.css" />
 
-  <!-- Globals: window.satellite (SGP4), window.Astronomy (astronomy-engine) -->
-  <script src="https://cdn.jsdelivr.net/npm/satellite.js@5.0.0/dist/satellite.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/astronomy-engine@2.1.19/astronomy.browser.min.js"></script>
+  <!-- Globals: window.satellite (SGP4), window.Astronomy (astronomy-engine). `defer` scripts run before module scripts. -->
+  <script defer crossorigin src="https://cdn.jsdelivr.net/npm/satellite.js@5.0.0/dist/satellite.min.js"></script>
+  <script defer crossorigin src="https://cdn.jsdelivr.net/npm/astronomy-engine@2.1.19/astronomy.browser.min.js"></script>
   <script type="importmap">
     { "imports": {
-        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.min.js",
         "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
     } }
   </script>
+  <!-- Warm the module graph: dynamic imports and their children are otherwise discovered one hop at a time. -->
+  <link rel="preload" href="data/sats-core.json" as="fetch" crossorigin />
+  <link rel="modulepreload" href="js/main.js" />
+  <link rel="modulepreload" href="js/state.js" />
+  <link rel="modulepreload" href="js/data/catalog.js" />
+  <link rel="modulepreload" href="js/clock.js" />
+  <link rel="modulepreload" href="js/util/time.js" />
+  <link rel="modulepreload" href="js/ui/shell.js" />
+  <link rel="modulepreload" href="js/ui/search.js" />
+  <link rel="modulepreload" href="js/ui/layers.js" />
+  <link rel="modulepreload" href="js/ui/detail.js" />
+  <link rel="modulepreload" href="js/ui/timebar.js" />
+  <link rel="modulepreload" href="js/tonight/tonight.js" />
+  <link rel="modulepreload" href="js/tonight/util.js" />
+  <link rel="modulepreload" href="js/tonight/astro.js" />
+  <link rel="modulepreload" href="js/tonight/score.js" />
+  <link rel="modulepreload" href="js/tonight/passes.js" />
+  <link rel="modulepreload" href="js/tonight/weather.js" />
+  <link rel="modulepreload" href="js/tonight/aurora.js" />
+  <link rel="modulepreload" href="js/tonight/location.js" />
+  <link rel="modulepreload" href="js/globe/globe.js" />
+  <link rel="modulepreload" href="js/globe/coords.js" />
+  <link rel="modulepreload" href="js/globe/earth.js" />
+  <link rel="modulepreload" href="js/globe/sats.js" />
+  <link rel="modulepreload" href="js/globe/overlays.js" />
+  <link rel="modulepreload" href="js/globe/detail.js" />
+  <link rel="modulepreload" href="js/data/propagator.js" />
+  <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.min.js" crossorigin />
+  <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js" crossorigin />
 </head>
 <body>
   <!-- Full-bleed views. Exactly one is visible (body[data-view]). -->

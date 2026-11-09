@@ -60,6 +60,36 @@ function sample(rec, ctx, ms) {
 
 const isVis = s => !!s && s.el > MIN_EL && s.sunlit && s.sunAlt < MAX_SUN_ALT;
 
+// Cheap visibility test, identical in outcome to isVis(sample(...)) but ordered so most steps cost almost nothing:
+// the Sun's altitude (shared by every satellite, cached per timestamp) is tested first, so during daylight no SGP4
+// is run at all; the sunlit test comes last.
+const sunCache = new Map();
+function sunAt(ctx, ms) {
+  let s = sunCache.get(ms);
+  if (s) return s;
+  const d = new Date(ms), gmst = satellite.gstime(d), sun = sunPos(ms);
+  const H = gmst + ctx.lonR - sun.ra;
+  const sunAlt = Math.asin(Math.sin(ctx.latR) * Math.sin(sun.dec) + Math.cos(ctx.latR) * Math.cos(sun.dec) * Math.cos(H)) * R2D;
+  s = { d, gmst, sun, sunAlt };
+  if (sunCache.size > 40000) sunCache.clear();
+  sunCache.set(ms, s);
+  return s;
+}
+function fastVis(rec, ctx, ms) {
+  const si = sunAt(ctx, ms);
+  if (!(si.sunAlt < MAX_SUN_ALT)) return false;
+  const pv = satellite.propagate(rec, si.d);
+  if (!pv.position) return false;
+  const la = satellite.ecfToLookAngles(ctx.gd, satellite.eciToEcf(pv.position, si.gmst));
+  if (!(la.elevation * R2D > MIN_EL)) return false;
+  const p = pv.position, u = si.sun.u, dot = p.x * u.x + p.y * u.y + p.z * u.z;
+  if (dot < 0) {
+    const px = p.x - dot * u.x, py = p.y - dot * u.y, pz = p.z - dot * u.z;
+    if (!(Math.hypot(px, py, pz) > RE_KM)) return false;
+  }
+  return true;
+}
+
 // Estimated apparent magnitude: standard magnitude is defined at 1000 km, 50% illuminated
 // (phase angle 90 deg); diffuse-sphere phase law.
 function estMag(s, ctx, std) {
@@ -76,7 +106,7 @@ function estMag(s, ctx, std) {
 function bisect(rec, ctx, a, b, wantAtB) {
   while (b - a > 1000) {
     const m = Math.round((a + b) / 2);
-    if (isVis(sample(rec, ctx, m)) === wantAtB) b = m; else a = m;
+    if (fastVis(rec, ctx, m) === wantAtB) b = m; else a = m;
   }
   return wantAtB ? b : a; // first visible ms (rise) or last visible ms (set)
 }
@@ -106,7 +136,7 @@ function passesFor(sat, ctx, startMs, endMs) {
       mag: +estMag(best, ctx, sat.std ?? 0).toFixed(1), track });
   };
   for (let t = startMs; t <= endMs; t += COARSE) {
-    const vis = isVis(sample(rec, ctx, t));
+    const vis = fastVis(rec, ctx, t);
     if (vis && !prevVis) runStart = t === startMs ? t : bisect(rec, ctx, prevT, t, true);
     if (!vis && prevVis) { finish(runStart, bisect(rec, ctx, prevT, t, false)); runStart = null; }
     prevVis = vis; prevT = t;
@@ -121,6 +151,7 @@ self.onmessage = (ev) => {
   if (!req || req.type !== 'compute') return;
   try {
     const ctx = makeCtx(req);
+    sunCache.clear();
     const end = req.startMs + req.days * 86400000;
     let passes = [];
     for (const s of req.sats) { try { passes = passes.concat(passesFor(s, ctx, req.startMs, end)); } catch (e) { /* skip bad TLE */ } }

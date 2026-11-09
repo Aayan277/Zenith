@@ -44,7 +44,7 @@ export async function init() {
       <div id="tn-banner"></div>
       <div class="tn-loc" id="tn-loc"></div>
       <section class="tn-card tn-score" id="tn-score" aria-label="Tonight score"></section>
-      <section class="tn-card tn-iss" id="tn-iss" aria-label="Next ISS pass"></section>
+      <div class="tn-card tn-iss" id="tn-iss"></div>
       <section class="tn-card" id="tn-passes" aria-label="Upcoming passes"></section>
       <section class="tn-card" id="tn-sun" aria-label="Sun and Moon"></section>
       <section class="tn-card" id="tn-cloud" aria-label="Cloud cover"></section>
@@ -296,12 +296,12 @@ function renderPasses() {
     const list = (ctx.passes || []).filter(p => p.end > now && p !== hero && worthIt(p));
     if (!list.length) { el.innerHTML = head('Upcoming passes', right) + `<p class="tn-empty">No other visible passes in the next 3 days.</p>`; return; }
     const shown = ctx.showAllPasses ? list : list.slice(0, 6);
-    el.innerHTML = head('Upcoming passes', right) + `<ul class="tn-passlist">` + shown.map(p => `
-      <li tabindex="0" role="button" data-sat="${p.satId}" aria-label="${esc(p.name)} pass">
+    el.innerHTML = head('Upcoming passes', right) + `<div class="tn-passlist" role="group" aria-label="Upcoming passes">` + shown.map(p => `
+      <div class="tn-pass" tabindex="0" role="button" data-sat="${p.satId}">
         <div class="tn-pt"><span class="tn-day">${relDay(p.start, now)}</span><span class="mono">${fmtTime(p.start)}</span></div>
         <div class="tn-pn"><b>${esc(shortName(p.name))}</b><span>${passInfoLine(p)} · ${dur(p.end - p.start)}</span></div>
         <div class="tn-pe"><span class="mono">${Math.round(p.maxEl)}°</span>${magDots(p.mag)}</div>
-      </li>`).join('') + `</ul>` + (list.length > 6 ? `<button class="tn-link tn-more" type="button" data-more>${ctx.showAllPasses ? 'Show fewer' : `Show all ${list.length}`}</button>` : '');
+      </div>`).join('') + `</div>` + (list.length > 6 ? `<button class="tn-link tn-more" type="button" data-more>${ctx.showAllPasses ? 'Show fewer' : `Show all ${list.length}`}</button>` : '');
   }, els.passes);
 }
 const shortName = n => n.replace(/\s*\(.*\)/, m => /ZARYA/.test(m) ? '' : (/TIANHE/.test(m) ? ' Tiangong' : '')).replace('CSS', 'CSS').trim() || n;

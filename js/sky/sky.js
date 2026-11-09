@@ -5,9 +5,10 @@ import * as clock from '../clock.js';
 import { D2R, R2D, makeFrame, computeBodies, applyM, enuToAltAz, altAzToEnu, limitMag, twilightName, compass,
   riseTransitSet, defineStar, observer, BODY_COLORS, BODY_NAMES } from './astro.js';
 import { loadSkyData, makeStarSprites, makeGlowSprite, bvBucket, BV_BUCKETS, MW_W, MW_H } from './data.js';
-import { initSats, setActive as setSatsActive, setObserver, getFrame as getSatFrame, satPosition, skyTrack, CAT_KEYS } from './sats.js';
+import { initSats, setActive as setSatsActive, setObserver, getFrame as getSatFrame, satPosition, skyTrack, tickSeq, CAT_KEYS } from './sats.js';
 import { registerProviders, fmtTime } from './details.js';
 import { fmtLocal, tzLabel } from '../util/time.js';
+import { createLoop, onVisibility, isHidden, reducedMotion, idle, QualityGovernor } from '../util/governor.js';
 
 const TAU = Math.PI * 2;
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
@@ -19,9 +20,19 @@ const PREF_KEY = 'skywatch:sky';
 let root, canvas, ctx, tip, headerEl, controlsEl;
 let W = 0, H = 0, dpr = 1;
 let data = null, sprites = null, sunGlow = null, moonGlow = null, glowSprites = {};
-let active = false, raf = 0, lastTs = 0;
+let active = false, lastTs = 0;
+// Layer caches (full-resolution offscreen canvases):
+//   back  = sky gradient + Milky Way + grid + constellation lines + non-twinkling stars  (changes with camera / slow time drift)
+//   front = ground + labels + compass                                                    (changes with camera / selection / ~1 Hz)
+// Per frame only the moving things are drawn on top: twinkling stars, bodies, satellites, tracks, selection ring.
+let backCv = null, backCtx = null, backKey = '', frontCv = null, frontCtx = null, frontKey = '';
+let mainCtx = null, queueOn = true, camBusy = false, qTier = 0, qGov = null, loop = null;
+const DEVICE_DPR = Math.min(window.devicePixelRatio || 1, 2);
+const QTIERS = [DEVICE_DPR, 1.5, 1].filter((d, i, a) => d <= DEVICE_DPR + 1e-6 && a.indexOf(d) === i);
+const PIN_QUALITY = /[?&]quality=(high|max)/.test(location.search);
+const invalidate = () => { skyKey = ''; backKey = ''; frontKey = ''; };
 let F = null;                       // frame matrices
-let bodies = [], bodiesTime = -1e15, bodiesLoc = '';
+let bodies = [], bodiesOrder = [], bodiesTime = -1e15, bodiesLoc = '', filtVer = 0;
 let sunAlt = -30, lim = 6.5;
 const opts = { lines: true, labels: true, mw: true, grid: false, sats: true };
 const cam = { alt: 90, az: 180, zoom: 1 };
@@ -48,6 +59,22 @@ export async function init() {
   if (!root) return;
   loadPrefs();
   buildDom();
+  setObserver(state.get('location'));
+  registerProviders({ data: () => data, frameAt: ms => (F && Math.abs(F.time - ms) < 1500 ? F : makeFrame(ms, state.get('location'))) });
+  loop = createLoop(loopFrame, { interval: idleInterval });
+  qGov = new QualityGovernor(QTIERS.length, (t) => { qTier = t; resize(); }, { pinned: PIN_QUALITY, name: 'sky' });
+  wire();
+  resize();
+  new ResizeObserver(resize).observe(root);
+  onVisibility((hidden) => { if (hidden) halt(); else if (active) resume(); });
+  // Star data / Milky Way / sprites are parsed off the critical path: right away when the sky is the first view,
+  // otherwise when the browser is idle.
+  const boot = async () => { await loadData(); await initSats(); setActive(state.get('view') === 'sky', true); };
+  if (state.get('view') === 'sky') await boot();
+  else idle(() => { boot().catch(e => console.error('[sky] boot', e)); }, 2500);
+}
+
+async function loadData() {
   try { data = await loadSkyData(); } catch (e) { console.error('[sky] data', e); state.emit('toast', 'Could not load star data'); return; }
   [...data.cons].sort((a, b) => b.segs.reduce((n, g) => n + g.length, 0) - a.segs.reduce((n, g) => n + g.length, 0)).forEach((c, i) => { c.rank = i; });
   sprites = makeStarSprites();
@@ -57,13 +84,6 @@ export async function init() {
     glowSprites[k] = makeGlowSprite(rgb, 64);
   hits = { n: 0, x: new Float32Array(data.stars.n), y: new Float32Array(data.stars.n), i: new Int32Array(data.stars.n) };
   buildTreeline();
-  setObserver(state.get('location'));
-  registerProviders({ data: () => data, frameAt: ms => (F && Math.abs(F.time - ms) < 1500 ? F : makeFrame(ms, state.get('location'))) });
-  await initSats();
-  wire();
-  resize();
-  new ResizeObserver(resize).observe(root);
-  setActive(state.get('view') === 'sky');
 }
 
 function loadPrefs() {
@@ -102,7 +122,7 @@ function buildDom() {
   syncButtons();
   controlsEl.addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
-    if (b.dataset.opt) { opts[b.dataset.opt] = !opts[b.dataset.opt]; savePrefs(); syncButtons(); skyKey = ''; }
+    if (b.dataset.opt) { opts[b.dataset.opt] = !opts[b.dataset.opt]; savePrefs(); syncButtons(); invalidate(); }
     else if (b.dataset.act === 'reset') resetView();
     else if (b.dataset.act === 'orient') toggleOrientation();
   });
@@ -116,28 +136,40 @@ function syncButtons() {
 function resize() {
   const r = root.getBoundingClientRect();
   W = Math.max(1, Math.round(r.width)); H = Math.max(1, Math.round(r.height));
-  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  dpr = QTIERS[qTier] || 1;
   canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
   canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
-  skyKey = ''; uiRect.bottom = 0;
+  if (!backCv) { backCv = document.createElement('canvas'); backCtx = backCv.getContext('2d'); frontCv = document.createElement('canvas'); frontCtx = frontCv.getContext('2d'); }
+  backCv.width = frontCv.width = canvas.width; backCv.height = frontCv.height = canvas.height;
+  invalidate(); uiRect.bottom = 0;
+  if (loop) loop.wake(300);
 }
 
-function setActive(on) {
-  if (on === active) return;
+function setActive(on, force) {
+  if (on === active && !force) return;
   active = on;
-  setSatsActive(on);
-  if (on) { lastTs = 0; resize(); raf = requestAnimationFrame(loop); }
-  else { cancelAnimationFrame(raf); raf = 0; if (orientOn) toggleOrientation(); }
+  if (on) resume();
+  else { halt(); if (orientOn) toggleOrientation(); }
+}
+// Hidden tab / other view: no rAF, no worker ticks.
+function halt() { loop && loop.stop(); setSatsActive(false); }
+function resume() {
+  if (isHidden() || !active || !loop) return;
+  setSatsActive(true);
+  lastTs = 0; if (qGov) qGov.reset();
+  loop.start();
 }
 
 function wire() {
   state.on('view', v => setActive(v === 'sky'));
-  state.on('location', loc => { setObserver(loc); F = null; bodiesTime = -1e15; skyKey = ''; selTrackKey = ''; });
-  state.on('selection', s => { selection = s; selTrackKey = ''; });
+  state.on('location', loc => { setObserver(loc); F = null; bodiesTime = -1e15; invalidate(); selTrackKey = ''; });
+  state.on('filters', () => { filtVer++; });
+  state.on('highlightsOnly', () => { filtVer++; });
+  state.on('selection', s => { selection = s; selTrackKey = ''; frontKey = ''; backKey = ''; loop && loop.wake(300); });
   selection = state.get('selection');
   state.on('focus', focusOn);
   state.on('passes', list => { passes = Array.isArray(list) ? list : []; passKey = ''; });
-  state.on('clock', () => { skyKey = ''; });
+  state.on('clock', () => { invalidate(); loop && loop.wake(300); });
   setupPointer();
 }
 
@@ -210,6 +242,8 @@ function resetView() {
 }
 const shortestAz = (from, to) => { let d = ((to - from) % 360 + 540) % 360 - 180; return from + d; };
 function startTween(to, dur = 1200) {
+  if (reducedMotion()) dur = 1;
+  if (loop) loop.wake(dur + 300);
   tween = { t0: performance.now(), dur, from: { ...cam }, to: { ...to } };
   zoomT = to.zoom; zoomAnchor = null; velPan.x = velPan.y = 0; velAz = 0;
 }
@@ -228,7 +262,7 @@ function stepCamera(dt, now) {
   if (Math.abs(zoomT - cam.zoom) > 1e-4) {
     let anchorVec = null;
     if (zoomAnchor && zoomT > cam.zoom && cam.zoom > 1.05) { layout(); anchorVec = unproj(zoomAnchor.x, zoomAnchor.y, [0, 0, 0]); }
-    cam.zoom *= Math.exp(Math.log(zoomT / cam.zoom) * (1 - Math.exp(-dt * 11)));
+    cam.zoom *= Math.exp(Math.log(zoomT / cam.zoom) * (1 - Math.exp(-dt * (reducedMotion() ? 1e3 : 11))));
     if (Math.abs(zoomT - cam.zoom) < 1e-3) cam.zoom = zoomT;
     if (anchorVec) { layout(); if (proj(anchorVec[0], anchorVec[1], anchorVec[2])) panPx(zoomAnchor.x - PX, zoomAnchor.y - PY); }
   }
@@ -243,13 +277,25 @@ function stepCamera(dt, now) {
 }
 
 // ---- main loop ----------------------------------------------------------------
-function loop(ts) {
+// Full rate while the camera moves / the user interacts / the sim runs fast; ~20-30 fps when still.
+function isBusy() {
+  return dragging || pointers.size > 0 || !!tween || orientOn || Math.abs(velAz) > 0.05 || Math.abs(velPan.x) + Math.abs(velPan.y) > 4
+    || Math.abs(zoomT - cam.zoom) > 1e-3 || Math.abs(clock.getRate()) > 10;
+}
+function idleInterval() {
+  if (camBusy) return 0;
+  return (selection || Math.abs(clock.getRate()) > 1.5) ? 33 : 50;
+}
+function loopFrame(ts, dt) {
   if (!active) return;
-  raf = requestAnimationFrame(loop);
-  const dt = Math.min(0.1, lastTs ? (ts - lastTs) / 1000 : 0.016); lastTs = ts;
+  lastTs = ts;
   const t0 = performance.now();
   try { frame(ts, dt); } catch (e) { console.error('[sky] frame', e); }
+  window.__skyFrames = (window.__skyFrames || 0) + 1;
   window.__skyFrameMs = (window.__skyFrameMs || 0) * 0.9 + (performance.now() - t0) * 0.1;
+  camBusy = isBusy();
+  if (camBusy) loop.wake(120);
+  qGov.sample(ts, camBusy);
 }
 
 function frame(ts, dt) {
@@ -263,9 +309,8 @@ function frame(ts, dt) {
   if (Math.abs(simNow - bodiesTime) > (bodiesTime === -1e15 ? 0 : 15000) || locKey !== bodiesLoc) {
     bodies = computeBodies(simNow, loc, F, true); bodiesTime = simNow; bodiesLoc = locKey;
     sunAlt = bodies[0] ? bodies[0].alt : -30; lim = limitMag(sunAlt);
-  } else {
-    // cheap refresh of alt/az for current frame (positions of date already computed)
-    const T = F.Mdate;
+    bodiesOrder = bodies.filter(b => b.name !== 'Sun' && b.name !== 'Moon').concat(bodies.filter(b => b.name === 'Moon'), bodies.filter(b => b.name === 'Sun'));
+    for (const b of bodies) if (!b.rgb) b.rgb = hexToRgb(b.color);
   }
   // camera -> equatorial matrix
   const M = F.M;
@@ -273,28 +318,87 @@ function frame(ts, dt) {
   C[3] = u0 * M[0] + u1 * M[3] + u2 * M[6]; C[4] = u0 * M[1] + u1 * M[4] + u2 * M[7]; C[5] = u0 * M[2] + u1 * M[5] + u2 * M[8];
   C[6] = f0 * M[0] + f1 * M[3] + f2 * M[6]; C[7] = f0 * M[1] + f1 * M[4] + f2 * M[7]; C[8] = f0 * M[2] + f1 * M[5] + f2 * M[8];
 
+  mainCtx = ctx;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
-  labelQ.length = 0; obst.length = 0;
-  drawSkyBackground(simNow);
   const night = clamp((lim - 1) / 3.5, 0, 1);   // 0 day .. 1 night, for overlays
-  if (opts.grid) drawGrid(ts);
-  if (opts.lines || opts.labels) drawConstellations(night);
-  drawStars(ts, night);
+  const rate = clock.getRate();
+  const hiCon = hoverCon || (selection?.kind === 'constellation' ? selection.id : '');
+
+  // ---- static layer: re-rendered when the camera moves or the star field has drifted by ~0.4 px
+  const driftPxPerS = 1.46e-4 * S * Math.max(1, Math.abs(rate));
+  const tb = clamp(400 / driftPxPerS, 250, 4000);
+  const bKey = `${cam.alt.toFixed(3)}|${cam.az.toFixed(3)}|${cam.zoom.toFixed(4)}|${W}|${H}|${dpr}|${uiRect.top | 0}|${uiRect.bottom | 0}|${opts.mw}|${opts.grid}|${opts.lines}|${hiCon}|${Math.floor(simNow / tb)}|${camBusy ? 1 : 0}|${Math.round(sunAlt * 4)}`;
+  // ---- front layer (ground, labels, compass): same camera triggers + selection/hover/filters + a ~1 Hz refresh
+  const fb = Math.abs(rate) <= 1.5 ? 1000 : 1;
+  const sel = selection ? selection.kind + selection.id : '';
+  const hv = hover ? hover.kind + hover.id : '';
+  const fKey = `${cam.alt.toFixed(3)}|${cam.az.toFixed(3)}|${cam.zoom.toFixed(4)}|${W}|${H}|${dpr}|${uiRect.top | 0}|${uiRect.bottom | 0}|${opts.lines}|${opts.labels}|${opts.sats}|${sel}|${hv}|${hiCon}|${filtVer}|${bodiesTime}|${passKey}|${Math.round(sunAlt * 8)}|${Math.floor(simNow / fb)}|${tickSeq()}`;
+  const needBack = bKey !== backKey, needFront = fKey !== frontKey;
+  // While the camera moves both layers change every frame and caching would only add two full-screen blits:
+  // draw straight onto the canvas (original order) and let the caches rebuild once the camera settles.
+  const direct = camBusy && needBack && needFront;
+  queueOn = needFront;
+  labelQ.length = 0; obst.length = 0;
+  if (direct) { backKey = ''; frontKey = ''; drawBackLayers(simNow, ts, night); }
+  else {
+    if (needBack) { backKey = bKey; renderBack(simNow, ts, night); }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(backCv, 0, 0);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  drawTwinkle(ts);
   drawBodies(ts, simNow);
-  if (opts.sats) drawSats(ts, simNow);
+  if (opts.sats) drawSats(ts, simNow); else satPick.n = 0;
   drawPassArc(simNow);
-  queueSelectionLabel(simNow);
-  // Labels go on top of the ground so ones near the horizon aren't clipped
-  // (objects below the horizon never queue a label).
-  drawGround(night);
-  flushLabels();
-  drawCompass();
+  if (needFront) {
+    queueSelectionLabel(simNow);
+    if (opts.lines || opts.labels) queueConLabels(night);
+    queueStarLabels(night);
+    if (direct) drawFrontLayers(night);
+    else { frontKey = fKey; renderFront(night); }
+  }
+  if (!direct) {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(frontCv, 0, 0);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
   drawSelection(ts, simNow);
   updateHeader(simNow, loc);
   // reset button visibility
   const rb = controlsEl.querySelector('.sky-reset'); const show = !(cam.alt >= 89.9 && Math.abs(cam.zoom - 1) < 0.02);
   if (rb.hidden === show) rb.hidden = !show;
+}
+
+function drawBackLayers(simNow, ts, night) {
+  drawSkyBackground(simNow);
+  if (opts.grid) drawGrid(ts);
+  if (opts.lines) drawConLines(night);
+  drawStarsStatic(night);
+}
+function drawFrontLayers(night) {
+  skyColors = skyParams(sunAlt);
+  // Labels go on top of the ground so ones near the horizon aren't clipped
+  // (objects below the horizon never queue a label).
+  drawGround(night);
+  flushLabels();
+  drawCompass();
+}
+function renderBack(simNow, ts, night) {
+  ctx = backCtx;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+  drawBackLayers(simNow, ts, night);
+  ctx = mainCtx;
+}
+function renderFront(night) {
+  ctx = frontCtx;
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, frontCv.width, frontCv.height);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+  drawFrontLayers(night);
+  ctx = mainCtx;
 }
 
 // ---- sky background (low-res per-pixel buffer, upscaled) ---------------------
@@ -318,8 +422,8 @@ function skyParams(s) {
 }
 
 function drawSkyBackground(simNow) {
-  const key = [cam.alt.toFixed(3), cam.az.toFixed(3), cam.zoom.toFixed(4), W, H, Math.floor(simNow / 4000), opts.mw].join('|');
-  const cell = opts.mw ? 6 : 10;
+  const key = [cam.alt.toFixed(3), cam.az.toFixed(3), cam.zoom.toFixed(4), W, H, Math.floor(simNow / 4000), opts.mw, camBusy].join('|');
+  const cell = opts.mw ? (camBusy ? 9 : 6) : 10;   // coarser gradient while the camera moves; settles to full detail when still
   const bw = Math.ceil(W / cell), bh = Math.ceil(H / cell);
   if (!skyBuf || skyBuf.width !== bw || skyBuf.height !== bh) {
     skyBuf = document.createElement('canvas'); skyBuf.width = bw; skyBuf.height = bh;
@@ -421,36 +525,36 @@ function drawGrid(ts) {
 const onScreen = (x, y, m = 20) => x > -m && x < W + m && y > -m && y < H + m;
 
 // ---- constellations -------------------------------------------------------------
-function drawConstellations(night) {
-  if (night < 0.02) return;
+function drawConLines(night) {
+  if (night < 0.02 || !opts.lines) return;
+  const hi = hoverCon || (selection?.kind === 'constellation' ? selection.id : null);
+  ctx.lineWidth = 1; ctx.lineCap = 'round';
+  ctx.strokeStyle = `rgba(110,195,255,${0.26 * night})`;
+  ctx.beginPath();
+  for (const c of data.cons) { if (c.id === hi) continue; conPath(c); }
+  ctx.stroke();
+  if (hi) {
+    const c = data.consById.get(hi);
+    if (c) { ctx.lineWidth = 1.6; ctx.strokeStyle = `rgba(140,220,255,${0.75 * night})`; ctx.beginPath(); conPath(c); ctx.stroke(); }
+  }
+}
+function queueConLabels(night) {
+  if (night < 0.02 || !opts.labels) return;
   const zs = Math.min(1.6, 1 + 0.12 * Math.log2(cam.zoom));
   const hi = hoverCon || (selection?.kind === 'constellation' ? selection.id : null);
-  if (opts.lines) {
-    ctx.lineWidth = 1; ctx.lineCap = 'round';
-    ctx.strokeStyle = `rgba(110,195,255,${0.26 * night})`;
-    ctx.beginPath();
-    for (const c of data.cons) { if (c.id === hi) continue; conPath(c); }
-    ctx.stroke();
-    if (hi) {
-      const c = data.consById.get(hi);
-      if (c) { ctx.lineWidth = 1.6; ctx.strokeStyle = `rgba(140,220,255,${0.75 * night})`; ctx.beginPath(); conPath(c); ctx.stroke(); }
-    }
-  }
-  if (opts.labels) {
-    const M = F.M;
-    const fs = compact() ? 8 : cam.zoom < 1.6 ? 9 : Math.round(9 * zs + 1);
-    const minorA = clamp((cam.zoom - 1.4) / 1.3, 0, 1);
-    for (const c of data.cons) {
-      const isHi = c.id === hi, sel = selection?.kind === 'constellation' && selection.id === c.id;
-      const major = c.rank < (compact() ? 16 : 36);
-      const k = major ? 1 : minorA;
-      if (k <= 0.02 && !isHi) continue;
-      const v = applyM(M, c.label[0], c.label[1], c.label[2], tmpv);
-      if (v[2] < -0.05) continue;
-      if (!proj(v[0], v[1], v[2]) || !onScreen(PX, PY, 40)) continue;
-      const a = (isHi ? 0.9 : (cam.zoom < 1.6 ? 0.19 : 0.27) * k) * night;
-      queueLabel('c:' + c.id, c.name.toUpperCase(), PX, PY, 0, sel ? 0 : 5, fs, `rgba(150,205,255,${a})`, 'center', 3, c);
-    }
+  const M = F.M;
+  const fs = compact() ? 8 : cam.zoom < 1.6 ? 9 : Math.round(9 * zs + 1);
+  const minorA = clamp((cam.zoom - 1.4) / 1.3, 0, 1);
+  for (const c of data.cons) {
+    const isHi = c.id === hi, sel = selection?.kind === 'constellation' && selection.id === c.id;
+    const major = c.rank < (compact() ? 16 : 36);
+    const k = major ? 1 : minorA;
+    if (k <= 0.02 && !isHi) continue;
+    const v = applyM(M, c.label[0], c.label[1], c.label[2], tmpv);
+    if (v[2] < -0.05) continue;
+    if (!proj(v[0], v[1], v[2]) || !onScreen(PX, PY, 40)) continue;
+    const a = (isHi ? 0.9 : (cam.zoom < 1.6 ? 0.19 : 0.27) * k) * night;
+    queueLabel('c:' + c.id, c.name.toUpperCase(), PX, PY, 0, sel ? 0 : 5, fs, `rgba(150,205,255,${a})`, 'center', 3, c);
   }
 }
 const tmpv = [0, 0, 0];
@@ -474,14 +578,17 @@ function firstIndexFainterThan(mag) {
   while (lo < hi) { const m = (lo + hi) >> 1; if (a[m] <= mag) lo = m + 1; else hi = m; }
   return lo;
 }
-function drawStars(ts, night) {
+const TWM = 3.6;                       // stars brighter than this twinkle: they are redrawn every frame
+const TW = { n: 0, x: new Float32Array(512), y: new Float32Array(512), a: new Float32Array(512), d: new Float32Array(512),
+  amp: new Float32Array(512), w: new Float32Array(512), ph: new Float32Array(512), b: new Uint8Array(512) };
+const starZs = () => (1 + 0.2 * Math.log2(cam.zoom)) * clamp(Math.sqrt(S / cam.zoom / 150), 0.72, 1);
+function drawStarsStatic(night) {
   const st = data.stars, M = F.M;
-  const zs = (1 + 0.2 * Math.log2(cam.zoom)) * clamp(Math.sqrt(S / cam.zoom / 150), 0.72, 1);
+  const zs = starZs();
   const nEnd = firstIndexFainterThan(lim + 0.7);
-  const t = ts / 1000;
   ctx.globalCompositeOperation = 'lighter';
   const vec = st.vec, mag = st.mag;
-  hits.n = 0;
+  hits.n = 0; TW.n = 0;
   const Cc = C;
   for (let i = nEnd - 1; i >= 0; i--) {
     const x = vec[i * 3], y = vec[i * 3 + 1], z = vec[i * 3 + 2];
@@ -495,38 +602,64 @@ function drawStars(ts, night) {
     const vis = clamp((lim - m + 0.7) / 1.7, 0, 1);
     if (vis <= 0.01) continue;
     let a = (0.3 + 0.7 * clamp((6.4 - m) / 4.8, 0, 1)) * vis;
-    if (m < 3.6) { const lowness = 1 - clamp(up * 2, 0, 1); a *= 1 + (0.05 + 0.2 * lowness * lowness) * Math.sin(t * (3 + (i % 7)) + st.phase[i]); }
     // atmospheric extinction near the horizon
     if (up < 0.15) a *= 0.35 + 0.65 * clamp((up + 0.012) / 0.15, 0, 1);
     const rc = (0.45 + 0.43 * Math.pow(Math.max(0, 5.9 - m), 1.12)) * zs;
     const d = rc * 5 + 1.2;
-    ctx.globalAlpha = a > 1 ? 1 : a;
-    ctx.drawImage(sprites[st.bucket[i]], X - d / 2, Y - d / 2, d, d);
+    if (m < TWM) {
+      const t = TW.n++;
+      if (t >= TW.x.length) { TW.n--; } else {
+        const lowness = 1 - clamp(up * 2, 0, 1);
+        TW.x[t] = X; TW.y[t] = Y; TW.a[t] = a; TW.d[t] = d; TW.b[t] = st.bucket[i];
+        TW.amp[t] = 0.05 + 0.2 * lowness * lowness; TW.w[t] = 3 + (i % 7); TW.ph[t] = st.phase[i];
+      }
+    } else {
+      ctx.globalAlpha = a > 1 ? 1 : a;
+      ctx.drawImage(sprites[st.bucket[i]], X - d / 2, Y - d / 2, d, d);
+    }
     if (m < 5.4) { const h = hits.n++; hits.x[h] = X; hits.y[h] = Y; hits.i[h] = i; }
   }
   ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
-  // star names (greedy, brightest first, skipping overlaps)
-  if (opts.labels && night > 0.05) {
-    const lm = Math.min(4.6, 2.2 + 0.9 * Math.log2(cam.zoom)) - (compact() ? 0.8 : 0);
-    const fs = Math.round((compact() ? 10 : 11) * Math.min(1.2, zs));
-    ctx.font = `500 ${fs}px ${FONT}`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-    for (const i of st.labelled) {
-      const m = mag[i]; if (m > lm) break;
-      const x = vec[i * 3], y = vec[i * 3 + 1], z = vec[i * 3 + 2];
-      const v = applyM(M, x, y, z, tmpv); if (v[2] < 0.02) continue;
-      if (!proj(v[0], v[1], v[2]) || !onScreen(PX, PY)) continue;
-      const rc = (0.45 + 0.43 * Math.pow(Math.max(0, 5.9 - m), 1.12)) * zs;
-      const al = clamp((lm - m) / 0.7, 0, 1) * night * clamp((lim - m) / 1.5, 0, 1);
-      if (al < 0.03) continue;
-      const isSel = selection?.kind === 'star' && selection.id === st.hip[i];
-      queueLabel('s:' + st.hip[i], data.names.get(st.hip[i]).name, PX, PY, rc * 1.4 + 2, isSel ? 0 : 3 + m / 10, fs, `rgba(214,228,255,${0.66 * al})`, 'side', 0);
-    }
+}
+// The bright stars: positions come from the last static render, only the scintillation is evaluated per frame.
+function drawTwinkle(ts) {
+  if (!TW.n) return;
+  const t = ts / 1000, still = reducedMotion();
+  ctx.globalCompositeOperation = 'lighter';
+  for (let k = 0; k < TW.n; k++) {
+    let a = TW.a[k];
+    if (!still) a *= 1 + TW.amp[k] * Math.sin(t * TW.w[k] + TW.ph[k]);
+    const d = TW.d[k];
+    ctx.globalAlpha = a > 1 ? 1 : a;
+    ctx.drawImage(sprites[TW.b[k]], TW.x[k] - d / 2, TW.y[k] - d / 2, d, d);
+  }
+  ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+}
+// star names (greedy, brightest first, skipping overlaps)
+function queueStarLabels(night) {
+  if (!(opts.labels && night > 0.05)) return;
+  const st = data.stars, M = F.M, vec = st.vec, mag = st.mag;
+  const zs = starZs();
+  const lm = Math.min(4.6, 2.2 + 0.9 * Math.log2(cam.zoom)) - (compact() ? 0.8 : 0);
+  const fs = Math.round((compact() ? 10 : 11) * Math.min(1.2, zs));
+  ctx.font = `500 ${fs}px ${FONT}`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  for (const i of st.labelled) {
+    const m = mag[i]; if (m > lm) break;
+    const x = vec[i * 3], y = vec[i * 3 + 1], z = vec[i * 3 + 2];
+    const v = applyM(M, x, y, z, tmpv); if (v[2] < 0.02) continue;
+    if (!proj(v[0], v[1], v[2]) || !onScreen(PX, PY)) continue;
+    const rc = (0.45 + 0.43 * Math.pow(Math.max(0, 5.9 - m), 1.12)) * zs;
+    const al = clamp((lm - m) / 0.7, 0, 1) * night * clamp((lim - m) / 1.5, 0, 1);
+    if (al < 0.03) continue;
+    const isSel = selection?.kind === 'star' && selection.id === st.hip[i];
+    queueLabel('s:' + st.hip[i], data.names.get(st.hip[i]).name, PX, PY, rc * 1.4 + 2, isSel ? 0 : 3 + m / 10, fs, `rgba(214,228,255,${0.66 * al})`, 'side', 0);
   }
 }
 
 // ---- label placement ----------------------------------------------------------
 const labelQ = [], obst = [], placedR = [], widthCache = new Map();
 function queueLabel(key, text, x, y, r, prio, fs, fill, mode, spacing, ref) {
+  if (!queueOn) return;
   labelQ.push({ key, text, x, y, r, prio, fs, fill, mode, spacing, ref });
 }
 function textW(text, fs, spacing, weight) {
@@ -577,12 +710,12 @@ function flushLabels() {
 }
 
 // ---- Sun, Moon, planets ---------------------------------------------------------
-const drawn = []; // pickable bodies this frame: {id, x, y, r}
+const drawn = []; drawn.n = 0; // pickable bodies this frame (pooled objects): {id, x, y, r, b}
 function drawBodies(ts, simNow) {
-  drawn.length = 0;
+  drawn.n = 0;
   ctx.textBaseline = 'middle';
   // planets first, then Moon, then Sun on top
-  const order = bodies.filter(b => b.name !== 'Sun' && b.name !== 'Moon').concat(bodies.filter(b => b.name === 'Moon'), bodies.filter(b => b.name === 'Sun'));
+  const order = bodiesOrder;
   const zs = 1 + 0.18 * Math.log2(cam.zoom);
   for (const b of order) {
     // refresh position for smoothness at high playback rates is covered by 15s recompute; fine at this scale
@@ -612,16 +745,17 @@ function drawBodies(ts, simNow) {
       ctx.fillStyle = b.color; ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
       ctx.globalAlpha = 1;
     }
-    drawn.push({ id: b.name, x, y, r: Math.max(r, 7), b });
+    const dr = drawn[drawn.n] || (drawn[drawn.n] = { id: '', x: 0, y: 0, r: 0, b: null }); drawn.n++;
+    dr.id = b.name; dr.x = x; dr.y = y; dr.r = Math.max(r, 7); dr.b = b;
     const isPl = b.name !== 'Sun' && b.name !== 'Moon';
     if (isPl && vis > 0.05) { // tiny coloured halo ring
       ctx.strokeStyle = b.color; ctx.globalAlpha = 0.55 * vis; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.arc(x, y, r + 4.5, 0, TAU); ctx.stroke(); ctx.globalAlpha = 1;
     }
-    obst.push(x - r - 3, y - r - 3, x + r + 3, y + r + 3);
+    if (queueOn) obst.push(x - r - 3, y - r - 3, x + r + 3, y + r + 3);
     const la = isPl ? 0.95 * vis : 0.9;
     let fill;
-    if (isPl) { const c = hexToRgb(b.color); fill = sunAlt > -3 ? `rgba(${c[0] * 0.35 | 0},${c[1] * 0.35 | 0},${c[2] * 0.45 | 0},${la})` : `rgba(${lerp(c[0], 255, 0.25) | 0},${lerp(c[1], 255, 0.25) | 0},${lerp(c[2], 255, 0.25) | 0},${la})`; }
+    if (isPl) { const c = b.rgb || (b.rgb = hexToRgb(b.color)); fill = sunAlt > -3 ? `rgba(${c[0] * 0.35 | 0},${c[1] * 0.35 | 0},${c[2] * 0.45 | 0},${la})` : `rgba(${lerp(c[0], 255, 0.25) | 0},${lerp(c[1], 255, 0.25) | 0},${lerp(c[2], 255, 0.25) | 0},${la})`; }
     else fill = b.name === 'Sun' ? 'rgba(255,255,255,0.92)' : (sunAlt > -3 ? 'rgba(20,40,80,0.85)' : 'rgba(235,242,255,0.9)');
     const sel = selection?.kind === 'body' && selection.id === b.name;
     queueLabel('b:' + b.name, b.name, x, y, r + 3, sel ? 0 : isPl ? 2 : 1, compact() ? 11 : 12, fill, 'side', 0);
@@ -672,6 +806,7 @@ function drawMoon(b, x, y, R) {
 }
 
 // ---- satellites -----------------------------------------------------------------
+const satCounts = new Int32Array(Object.keys(state.CATEGORIES).length + 1), satPos2 = new Int32Array(Object.keys(state.CATEGORIES).length);
 const satTmp = { cap: 0, order: null, x: null, y: null, ok: null };
 const satPick = { n: 0, x: new Float32Array(0), y: new Float32Array(0), idx: new Int32Array(0) };
 function drawSats(ts, simNow) {
@@ -684,11 +819,11 @@ function drawSats(ts, simNow) {
   const zs = 1 + 0.15 * Math.log2(cam.zoom);
   const K = CAT_KEYS.length;
   // bucket by category
-  const counts = new Int32Array(K + 1);
+  const counts = satCounts; counts.fill(0);
   for (let j = 0; j < fr.count; j++) counts[fr.cat[j] + 1]++;
   for (let c = 0; c < K; c++) counts[c + 1] += counts[c];
   if (satTmp.cap < fr.count) { satTmp.cap = fr.count + 512; satTmp.order = new Int32Array(satTmp.cap); satTmp.x = new Float32Array(satTmp.cap); satTmp.y = new Float32Array(satTmp.cap); satTmp.ok = new Uint8Array(satTmp.cap); }
-  const order = satTmp.order, pos = counts.slice(0, K);
+  const order = satTmp.order, pos = satPos2; for (let c = 0; c < K; c++) pos[c] = counts[c];
   for (let j = 0; j < fr.count; j++) order[pos[fr.cat[j]]++] = j;
   const px = satPick.x, py = satPick.y, pidx = satPick.idx;
   let np = 0;
@@ -720,7 +855,7 @@ function drawSats(ts, simNow) {
   satPick.n = np; satPick.frame = fr;
   // labels for stations and selection
   ctx.font = `500 11px ${FONT}`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-  for (let j = 0; j < fr.count; j++) {
+  if (queueOn) for (let j = 0; j < fr.count; j++) {
     if (!ok[j]) continue;
     const id = fr.ids[fr.idx[j]];
     if (fr.cat[j] === 0 && fr.lit[j] || id === selId) {
@@ -786,9 +921,11 @@ function buildTreeline() {
   }
   treeCache = { N, pts };
 }
+let groundXY = null;
 function drawGround(night) {
   const { N, pts } = treeCache;
-  const gx = new Float32Array(N), gy = new Float32Array(N);
+  if (!groundXY || groundXY[0].length !== N) groundXY = [new Float32Array(N), new Float32Array(N)];
+  const gx = groundXY[0], gy = groundXY[1];
   for (let i = 0; i < N; i++) {
     const e = pts[i * 3], n = pts[i * 3 + 1], u = pts[i * 3 + 2];
     const xc = r0 * e + r1 * n + r2 * u, yc = u0 * e + u1 * n + u2 * u, zc = f0 * e + f1 * n + f2 * u;
@@ -875,21 +1012,23 @@ function drawSelection(ts, simNow) {
   const v = objectEnu(selection.kind, selection.id, simNow);
   if (!v || v[2] < -0.02 || !proj(v[0], v[1], v[2]) || !onScreen(PX, PY, 40)) return;
   const t = ts / 1000;
-  const r = (selection.kind === 'constellation' ? 0 : 13) + 2 * Math.sin(t * 3);
+  const still = reducedMotion();
+  const r = (selection.kind === 'constellation' ? 0 : 13) + (still ? 0 : 2 * Math.sin(t * 3));
   if (selection.kind === 'constellation') return;
-  ctx.save(); ctx.translate(PX, PY); ctx.rotate(t * 0.8);
+  ctx.save(); ctx.translate(PX, PY); ctx.rotate(still ? 0 : t * 0.8);
   ctx.strokeStyle = 'rgba(92,225,255,0.95)'; ctx.lineWidth = 1.4; ctx.setLineDash([5, 5]);
   ctx.beginPath(); ctx.arc(0, 0, r + (selection.kind === 'body' ? 8 : 0), 0, TAU); ctx.stroke();
   ctx.restore();
 }
 
 function pick(px, py) {
+  if (!data) return null;
   let best = null, bd = 1e9;
   const consider = (kind, id, x, y, rad, pri, label, extra) => {
     const d = Math.hypot(x - px, y - py) - pri;
     if (Math.hypot(x - px, y - py) <= rad && d < bd) { bd = d; best = { kind, id, x, y, label, ...extra }; }
   };
-  for (const o of drawn) consider('body', o.id, o.x, o.y, Math.max(12, o.r + 4), 10, o.id, { body: o.b });
+  for (let q = 0; q < drawn.n; q++) { const o = drawn[q]; consider('body', o.id, o.x, o.y, Math.max(12, o.r + 4), 10, o.id, { body: o.b }); }
   if (opts.sats && satPick.n && satPick.frame) {
     const fr = satPick.frame;
     for (let q = 0; q < satPick.n; q++) {
@@ -921,7 +1060,7 @@ let lastTap = { t: 0, x: 0, y: 0 }, downInfo = null, pinch0 = null, lastMoveT = 
 function setupPointer() {
   canvas.style.touchAction = 'none';
   canvas.addEventListener('pointerdown', e => {
-    canvas.setPointerCapture(e.pointerId);
+    canvas.setPointerCapture(e.pointerId); loop.wake(800);
     pointers.set(e.pointerId, { x: e.offsetX, y: e.offsetY });
     tween = null; velPan.x = velPan.y = 0; velAz = 0;
     if (pointers.size === 1) { downInfo = { x: e.offsetX, y: e.offsetY, t: performance.now(), moved: 0 }; dragging = true; }
@@ -930,7 +1069,7 @@ function setupPointer() {
   });
   canvas.addEventListener('pointermove', e => {
     const p = pointers.get(e.pointerId);
-    if (!p) { onHover(e.offsetX, e.offsetY, e); return; }
+    if (!p) { loop.wake(250); onHover(e.offsetX, e.offsetY, e); return; }
     const nx = e.offsetX, ny = e.offsetY, dx = nx - p.x, dy = ny - p.y;
     p.x = nx; p.y = ny;
     const now = performance.now(), dtm = Math.max(1, now - lastMoveT); lastMoveT = now;
@@ -960,8 +1099,9 @@ function setupPointer() {
     pointers.delete(e.pointerId);
     if (pointers.size === 0) {
       dragging = false; canvas.style.cursor = '';
+      loop.wake(700);
       if (downInfo && downInfo.moved < 6 && performance.now() - downInfo.t < 500) onTap(e.offsetX, e.offsetY, e.pointerType);
-      else if (performance.now() - lastMoveT > 90) { velPan.x = velPan.y = 0; velAz = 0; }
+      else if (performance.now() - lastMoveT > 90 || reducedMotion()) { velPan.x = velPan.y = 0; velAz = 0; }
       downInfo = null;
     }
     if (pointers.size < 2) pinch0 = null;
@@ -973,7 +1113,7 @@ function setupPointer() {
     e.preventDefault();
     const dy = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
     zoomT = clamp(zoomT * Math.exp(-dy * 0.0016), 1, 60);
-    zoomAnchor = { x: e.offsetX, y: e.offsetY }; tween = null;
+    zoomAnchor = { x: e.offsetX, y: e.offsetY }; tween = null; loop.wake(1500);
   }, { passive: false });
   canvas.addEventListener('dblclick', e => { e.preventDefault(); resetView(); });
 }

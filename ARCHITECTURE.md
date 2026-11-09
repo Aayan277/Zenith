@@ -39,14 +39,32 @@ must not break the others. Do NOT import from `main.js` (circular). To show a to
   browser zone. The timebar shows observer time too.
 - `js/clock.js` — simulated time. `now()` ms, `nowDate()`, `isLive()`, `getRate()`,
   `setTime(ms)`, `setRate(r)`, `goLive()`. Emits `clock` on change. Views read `now()` every frame.
-- `js/data/catalog.js` — `loadCatalog()`, `getSat(id)`, `allSats()`, `satrec(id)`.
-  `data/sats.json`: `{ generated, source, sats: [{ id, name, cat, l1, l2, mag? }] }`, `cat` ∈ CATEGORIES keys.
+- `js/data/catalog.js` — `loadCatalog()`, `loadFullCatalog()`, `isFullCatalog()`, `onCatalogUpdate(fn)`, `getSat(id)`, `allSats()`, `satrec(id)`.
+  Two-stage load so the UI never waits for the 3.4 MB file:
+  1. `data/sats-core.json` (~800 sats: stations, notable, bright, size L; ~45 KB gz) — `loadCatalog()` resolves when this is installed.
+  2. `data/sats.json` (all ~18.7k sats, ~0.95 MB gz) is fetched when the browser is idle after stage 1 and then replaces the list.
+
+  **Events** (via `state.on` / `state.emit`):
+  - `catalog` `{ stage: 'core' | 'full', full: boolean, count }` — emitted once per stage, right after the lists are installed.
+    **Anything that copied `allSats()` (propagator worker `init`, `SatLayer.setCatalog`, id→index maps) must re-read it on
+    `catalog` with `stage === 'full'`.** After that event `allSats()` returns a NEW array (larger, ordered by category then id, so
+    indices change); sat objects that existed in the core are reused by identity. `catalogReady` is a state key that is also re-set (and
+    therefore re-emitted) on every stage, so cheap "refresh my counts/list" listeners keep working unchanged.
+  - `onCatalogUpdate(fn)` is sugar for `state.on('catalog', fn)` and returns the unsubscribe function. Events are not replayed: if
+    `isFullCatalog()` is already true, handle it immediately.
+  Sat object shape is unchanged: `{ id, name, cat, l1, l2, bright?, size?, notable? }`; `cat` ∈ CATEGORIES keys.
+  File format v2 (both files): `{ v: 2, generated, source, core?, sats: [[id, name, cat, l1, l2, flags, size, notable?], ...] }`,
+  `flags` bit 1 = bright, bit 2 = notable (name in row[7]); `size` is `''` when unknown; `l1`/`l2` omit their `"1 NNNNN"`/`"2 NNNNN"`
+  prefix (catalog.js rebuilds it). The core is a strict subset of the full file. The legacy object format is still accepted.
 - `js/data/propagator.js` (owned by globe agent) — one Web Worker propagates the whole catalog;
   both views consume it:
   ```js
   import { onTick, getLatest } from './data/propagator.js';
   // tick = { time: ms, ids: Int32Array, ecef: Float32Array (x,y,z km, ECEF), sunlit: Uint8Array, count }
-  // index i ↔ ids[i]. Positions are for `time` (sim clock). Runs at ~10 Hz while any consumer is active.
+  // index i ↔ ids[i]. Positions are for `time` (sim clock, one tick interval ahead: interpolate). `ids` is the same
+  // object for every tick of a catalog generation (identity changes when the catalog grows core → full).
+  // ecef (0,0,0) = no position (layer-filtered out / decayed). ecef+sunlit buffers are pooled: don't keep them.
+  // Tick rate adapts (~1 Hz at 1×, up to 10 Hz at high sim rates); nothing runs while the tab is hidden.
   const off = onTick(tick => …);
   ```
   `getLatest()` returns the last tick or null. Also exports `ecefToTopo(ecefKm, lat, lon, elevM) -> {az, el, rangeKm}` (degrees).
@@ -67,9 +85,33 @@ must not break the others. Do NOT import from `main.js` (circular). To show a to
 | `star` | HIP number | sky |
 | `constellation` | IAU abbrev e.g. `'Ori'` | sky |
 
+## Globe plug-ins
+
+Other modules add layers to the orbit view through `js/globe/plugins.js` without touching `globe.js`:
+
+```js
+import { registerGlobeLayer } from './globe/plugins.js';
+registerGlobeLayer({
+  id: 'launches',
+  init(ctx) {},                      // once, when the globe is ready (immediately if it already is)
+  update(ctx, nowMs, dtMs) {},       // every RENDERED frame
+  pick(ctx, x, y) { return null; },  // click at CSS px in the globe; return a selection {kind,id} to claim the click
+  dispose() {},
+});
+// ctx = { THREE, scene, camera, renderer, root, coords, host, requestRender(ms = 300) }
+```
+
+- `root` is an Earth-fixed `THREE.Group` (radius 1 = 6371 km, +Y north; see `js/globe/coords.js`): add meshes there.
+- `host` is `#view-globe`; use it for DOM labels and position them from `update()`.
+- The globe renders at 60 fps while the camera moves or something animates and drops to ~20-30 fps when idle.
+  `update()` only runs on rendered frames: call `ctx.requestRender(ms)` (e.g. from `update()` while your layer animates)
+  to keep the full frame rate for `ms`, or after you change anything while the globe is idle.
+- `pick` is asked on click before satellites; the first layer returning a selection wins (it is passed to `state.set('selection', …)`).
+- Layers may be registered before or after the globe initialises. Exceptions in a layer are caught and logged.
+
 ## Data pipeline
 
-`scripts/fetch-sats.mjs` (Node 20, no deps) builds `data/sats.json` from CelesTrak groups
+`scripts/fetch-sats.mjs` (Node 20, no deps) builds `data/sats.json` and `data/sats-core.json` from CelesTrak groups
 (fallback: tle.ivanstanojevic.me). A scheduled GitHub Action runs it every 6h, commits,
 and Pages redeploys. Star data in `data/sky/` (from d3-celestial, BSD-3), compacted by
 `scripts/build-sky.mjs` into `data/sky/sky.json`.
@@ -87,3 +129,23 @@ Mobile (≤760px): side panels become bottom sheets; nothing may cause horizonta
 npx --yes http-server -p 8080 -c-1 .
 ```
 Headless check: Playwright's Chromium is preinstalled (`require('playwright')`). WebGL works via SwiftShader (slow — that's fine).
+
+
+## Loading & performance contract
+
+- **Boot order** (`js/main.js`): shell + tonight panel first (the boot overlay lifts when they are ready); globe (three.js + textures)
+  and the satellite catalog load in parallel but never gate the UI; the sky view (`sky.js`) initialises on first need (view switch, non-sat
+  selection, `focus`) or when idle. Without WebGL the globe module is not loaded at all (message shown, Sky view still works).
+- **Textures** (`assets/textures/`, WebP): first load = `*-2k.webp` (≈0.6 MB). On desktop (≥900px, fine pointer, no save-data/slow connection,
+  ≥4 GB, maxTextureSize ≥ 4096) `earth.js` swaps in `earth-day-4k.webp` / `earth-night-4k.webp` ≈1.5 s after the first frame, when idle.
+  The canvas fades in via `body[data-earth="ready"]` (set by `earth.js`, styled in `css/base.css`). Re-generate with PIL
+  (`Image.save(..., 'WEBP', quality=80-90, method=6)`); ImageMagick 6 ignores `-quality` for WebP.
+- **Scripts**: `satellite.js` and `astronomy-engine` are `defer` classic scripts (they run before module scripts, so `window.satellite` /
+  `window.Astronomy` exist when modules run). three comes from `three.module.min.js` via the import map. Critical modules are `modulepreload`ed.
+- **Fonts** are self-hosted (`assets/fonts/*.woff2`, `@font-face` in `css/base.css`); the two latin files are preloaded.
+- **Service worker** (`sw.js`, registered after `load`): precaches the shell, stale-while-revalidate for css/js/assets, cache-first for the
+  pinned jsdelivr libs, network-first (3 s) with cache fallback for `data/*.json`, ignores other APIs. The cache name carries a build id:
+  `.github/workflows/pages.yml` replaces `__BUILD__` in `sw.js` with the commit SHA + run id. When you add a module/asset that is needed
+  offline on first visit, add it to `PRECACHE` in `sw.js` (anything else is cached on first use).
+- **Deploy**: the Pages workflow minifies every `js/**/*.js`, `sw.js` and `css/*.css` in `_site` with esbuild (per file, no bundling), so
+  keep modules plain ESM (no build-time imports).
