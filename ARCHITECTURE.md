@@ -31,9 +31,12 @@ must not break the others. Do NOT import from `main.js` (circular). To show a to
 
 - `js/state.js` — `get/set/patch/on/emit`, `CATEGORIES` (key → {label, color, size}),
   `registerDetailProvider(kind, fn)`, `getDetail(selection, nowMs)`.
-  State keys: `view`, `location {lat, lon, elevM, name, source}`, `selection`, `filters`, `catalogReady`.
+  State keys: `view`, `location {lat, lon, elevM, name, source, tz?}`, `selection`, `filters`, `highlightsOnly`, `catalogReady`.
   Events (not state): `clock`, `toast`, `focus` (`{kind,id}` — request the active view to fly/pan to an object),
   `passes` (emitted by tonight with computed pass list so the sky/globe can highlight them).
+- `js/util/time.js` — observer-local time: `fmtLocal(ms, intlOpts)`, `tzLabel(ms)`, `tzOffsetMinutes(ms)`,
+  `learnZone(ianaTz)`. ALL observer-facing times (sky header, rise/set, passes, sun/moon) use these, never the
+  browser zone. The timebar shows observer time too.
 - `js/clock.js` — simulated time. `now()` ms, `nowDate()`, `isLive()`, `getRate()`,
   `setTime(ms)`, `setRate(r)`, `goLive()`. Emits `clock` on change. Views read `now()` every frame.
 - `js/data/catalog.js` — `loadCatalog()`, `getSat(id)`, `allSats()`, `satrec(id)`.
