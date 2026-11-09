@@ -26,7 +26,8 @@ export async function useMyLocation() {
   const lat = +pos.coords.latitude.toFixed(4), lon = +pos.coords.longitude.toFixed(4);
   const elevM = Math.round(pos.coords.altitude || 0);
   const name = await reverseName(lat, lon);
-  const loc = { lat, lon, elevM, name, source: 'gps' };
+  const tz = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return undefined; } })(); // user is physically here
+  const loc = { lat, lon, elevM, name, source: 'gps', tz };
   setLocation(loc);
   return loc;
 }
@@ -62,7 +63,7 @@ export function openLocationPicker() {
   };
   const choose = r => {
     const name = [r.name, r.country_code || r.country].filter(Boolean).join(', ');
-    setLocation({ lat: +r.latitude.toFixed(4), lon: +r.longitude.toFixed(4), elevM: Math.round(r.elevation || 0), name, source: 'search' });
+    setLocation({ lat: +r.latitude.toFixed(4), lon: +r.longitude.toFixed(4), elevM: Math.round(r.elevation || 0), name, source: 'search', tz: r.timezone });
     close();
   };
   const close = () => { closeModal(); prevFocus?.focus?.(); };

@@ -5,7 +5,10 @@
 //   node scripts/fetch-sats.mjs [--out data/sats.json] [--allow-small]
 //        [--fallback-only] [--max-pages N] [--max-age-days 30] [--quiet]
 //
-// Output: { generated, source, sats: [{ id, name, cat, l1, l2, bright? }] }
+// Output: { generated, source, sats: [{ id, name, cat, l1, l2, bright?, size?, notable? }] }
+//   size    'S' (<0.1 m2) | 'M' (0.1-1 m2) | 'L' (>1 m2), from CelesTrak SATCAT radar cross-section; omitted if unknown
+//   notable display name for a curated list of famous objects / crewed vehicles
+//   --enrich-only  re-apply category cleanup, notable and size to the existing output file (no TLE fetch)
 
 import { writeFile, rename, mkdir, readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
@@ -23,6 +26,7 @@ const opt = (n, d) => { const i = argv.indexOf(`--${n}`); return i >= 0 && argv[
 const OUT = resolve(ROOT, opt('out', 'data/sats.json'));
 const ALLOW_SMALL = flag('allow-small');
 const FALLBACK_ONLY = flag('fallback-only');
+const ENRICH_ONLY = flag('enrich-only');
 const MAX_PAGES = Number(opt('max-pages', 0)) || Infinity;
 const MAX_AGE_DAYS = Number(opt('max-age-days', 30));
 const log = (...a) => { if (!flag('quiet')) console.log(...a); };
@@ -53,7 +57,7 @@ async function get(url, { json = false, tries = 3 } = {}) {
   for (let i = 0; i < tries; i++) {
     try {
       const res = await fetch(url, {
-        headers: { 'User-Agent': UA, Accept: json ? 'application/json' : 'text/plain' },
+        headers: { 'User-Agent': UA, Accept: json ? 'application/json' : '*/*' },
         signal: AbortSignal.timeout(45000),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -174,8 +178,104 @@ async function fromIvan() {
   return { sats: [...byId.values()], source: 'tle.ivanstanojevic.me' };
 }
 
+
+// ---- Highlights: stations cleanup, notable list, SATCAT sizes ----------------
+// Only real stations and visiting/attached vehicles belong in 'stations'.
+const STATION_RE = /^(ISS|CSS|ZARYA|ZVEZDA|NAUKA|POISK|RASSVET|TIANHE|WENTIAN|MENGTIAN|PROGRESS|SOYUZ|TIANZHOU|SHENZHOU|CYGNUS|DRAGON|CREW|HTV|DREAM CHASER)\b/i;
+// [NORAD id, display name, name check]. A wrong id (name mismatch) is dropped.
+const NOTABLE = [
+  [25544, 'ISS', /ISS|ZARYA/], [48274, 'Tiangong', /CSS|TIANHE/], [20580, 'Hubble', /HST|HUBBLE/],
+  [43013, 'NOAA-20', /NOAA 20|JPSS-1/], [54234, 'NOAA-21', /NOAA 21|JPSS-2/],
+  [25994, 'Terra', /TERRA/], [27424, 'Aqua', /AQUA/], [39084, 'Landsat 8', /LANDSAT 8/], [49260, 'Landsat 9', /LANDSAT 9/],
+  [40697, 'Sentinel-2A', /SENTINEL-2A/], [41866, 'GOES-16', /GOES 16/], [51850, 'GOES-18', /GOES 18/],
+  [28485, 'Swift', /SWIFT/], [33053, 'Fermi', /FERMI|FGRST|GLAST/], [25867, 'Chandra', /CHANDRA|CXO/],
+  [38358, 'NuSTAR', /NUSTAR/], [43435, 'TESS', /TESS/], [27386, 'Envisat', /ENVISAT/],
+  [5, 'Vanguard 1', /VANGUARD 1/], [39634, 'Sentinel-1A', /SENTINEL-1A/], [60133, 'GOES-19', /GOES 19/],
+];
+// Crewed / cargo vehicles currently attached to or near stations (found by name).
+const VEHICLE_RE = /^(CREW DRAGON|SOYUZ-MS|SHENZHOU|TIANZHOU|PROGRESS-MS|CYGNUS|DRAGON)\b/i;
+
+function sizeFromRcs(v) {
+  const x = parseFloat(v);
+  if (!Number.isFinite(x) || v === '' ) return undefined;
+  return x < 0.1 ? 'S' : x <= 1 ? 'M' : 'L';
+}
+function splitCsv(line) {
+  const out = []; let cur = '', q = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (q) { if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
+    else if (c === '"') q = true; else if (c === ',') { out.push(cur); cur = ''; } else cur += c;
+  }
+  out.push(cur); return out;
+}
+// One polite request for the whole SATCAT. Returns Map(noradId -> 'S'|'M'|'L'), or null on failure.
+async function fetchSizes() {
+  try {
+    const text = await get('https://celestrak.org/pub/satcat.csv');
+    const lines = text.split(/\r?\n/);
+    const head = splitCsv(lines[0]);
+    const iId = head.indexOf('NORAD_CAT_ID'), iRcs = head.indexOf('RCS');
+    if (iId < 0 || iRcs < 0) throw new Error('unexpected SATCAT header');
+    const m = new Map();
+    for (let i = 1; i < lines.length; i++) {
+      if (!lines[i]) continue;
+      const c = splitCsv(lines[i]);
+      const sz = sizeFromRcs(c[iRcs]);
+      if (sz) m.set(parseInt(c[iId], 10), sz);
+    }
+    log(`  satcat: ${m.size} objects with RCS`);
+    return m;
+  } catch (e) { log('  satcat unavailable:', e.message); return null; }
+}
+
+// Mutates sats: fixes 'stations', sets notable and (when known) size.
+function enrich(sats, sizes, prevSizes) {
+  const byId = new Map(sats.map(s => [s.id, s]));
+  for (const s of sats) {
+    if (s.cat === 'stations' && !STATION_RE.test(s.name)) s.cat = classify(s.name) === 'stations' ? 'other' : classify(s.name);
+    delete s.notable;
+    const sz = (sizes && sizes.get(s.id)) || prevSizes?.get(s.id);
+    if (sz) s.size = sz; else delete s.size;
+  }
+  const kept = [];
+  for (const [id, name, re] of NOTABLE) {
+    const s = byId.get(id);
+    if (!s) continue;
+    if (!re.test(s.name.toUpperCase())) { log(`  notable ${id} "${name}" does not match catalog name "${s.name}" - dropped`); continue; }
+    s.notable = name; s.bright = true; kept.push(`${id}:${name}`);
+  }
+  for (const s of sats) if (s.cat === 'stations' && VEHICLE_RE.test(s.name) && !s.notable) {
+    s.notable = s.name.replace(/\s*\(.*\)$/, '').replace(/\b([A-Z])([A-Z]+)/g, (_, a, b) => a + b.toLowerCase()).replace(/-ms /i, '-MS ');
+    s.bright = true; kept.push(`${s.id}:${s.notable}`);
+  }
+  log('  notable:', kept.join(', '));
+}
+function packSat(s) {
+  const o = { id: s.id, name: s.name, cat: s.cat, l1: s.l1, l2: s.l2 };
+  if (s.bright) o.bright = true;
+  if (s.size) o.size = s.size;
+  if (s.notable) o.notable = s.notable;
+  return o;
+}
+async function writeOut(out) {
+  await mkdir(dirname(OUT), { recursive: true });
+  const tmp = OUT + '.tmp';
+  await writeFile(tmp, JSON.stringify(out));
+  await rename(tmp, OUT);
+}
+async function enrichOnly() {
+  const prev = JSON.parse(await readFile(OUT, 'utf8'));
+  const sizes = await fetchSizes();
+  enrich(prev.sats, sizes, null);
+  prev.sats = prev.sats.map(packSat);
+  await writeOut(prev);
+  log(`Enriched ${prev.sats.length} satellites in ${OUT}`);
+}
+
 // ---- main ------------------------------------------------------------------
 async function main() {
+  if (ENRICH_ONLY) return enrichOnly();
   let result = null;
   if (!FALLBACK_ONLY) {
     log('Fetching CelesTrak…');
@@ -204,12 +304,14 @@ async function main() {
   const out = {
     generated: new Date().toISOString(),
     source: result.source,
-    sats: result.sats.map(s => {
-      const o = { id: s.id, name: s.name, cat: s.cat, l1: s.l1, l2: s.l2 };
-      if (s.bright) o.bright = true;
-      return o;
-    }),
+    sats: [],
   };
+  let prevSizes = null;
+  try { prevSizes = new Map(JSON.parse(await readFile(OUT, 'utf8')).sats.filter(x => x.size).map(x => [x.id, x.size])); } catch {}
+  await sleep(DELAY_MS);
+  enrich(result.sats, await fetchSizes(), prevSizes);
+  out.sats = result.sats.map(packSat);
+  counts.stations = out.sats.filter(s => s.cat === 'stations').length;
 
   // A capped/partial run must not clobber a much bigger existing catalog.
   try {
@@ -220,10 +322,7 @@ async function main() {
     }
   } catch {}
 
-  await mkdir(dirname(OUT), { recursive: true });
-  const tmp = OUT + '.tmp';
-  await writeFile(tmp, JSON.stringify(out));
-  await rename(tmp, OUT);
+  await writeOut(out);
   log(`Wrote ${out.sats.length} satellites from ${out.source} -> ${OUT}`);
   log('By category:', JSON.stringify(counts));
 }

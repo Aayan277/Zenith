@@ -17,10 +17,11 @@ function pickSats() {
   for (const s of allSats()) {
     // 'stations' also holds docked modules, cargo ships and debris: keep only the station cores.
     if (s.cat === 'stations' && /^(ISS|CSS) \((ZARYA|TIANHE)\)/.test(s.name) && !SKIP.has(s.id)) ids.add(s.id);
+    else if (s.notable && s.bright && !SKIP.has(s.id)) ids.add(s.id);
     else if (s.mag != null && s.mag <= 3) ids.add(s.id);
   }
   return [...ids].map(getSat).filter(Boolean).map(s => ({
-    id: s.id, name: s.name, l1: s.l1, l2: s.l2, std: s.mag != null ? s.mag : (STD[s.id] ?? -0.5) }));
+    id: s.id, name: s.notable || s.name, l1: s.l1, l2: s.l2, std: s.mag != null ? s.mag : (STD[s.id] ?? -0.5) }));
 }
 
 export function getPasses() { return current; }

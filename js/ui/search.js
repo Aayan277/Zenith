@@ -6,6 +6,12 @@ const BODIES = [
   ['Sun', '#ffb347'], ['Moon', '#dfe6f5'], ['Mercury', '#b8b2a8'], ['Venus', '#f2dca0'],
   ['Mars', '#ff7a59'], ['Jupiter', '#e6c9a0'], ['Saturn', '#ead9a6'], ['Uranus', '#8fe3e6'], ['Neptune', '#6f8fff'],
 ];
+// Friendly aliases for the objects people actually look for.
+const ALIASES = {
+  25544: ['iss', 'international space station', 'space station', 'zarya'],
+  48274: ['tiangong', 'css', 'chinese station', 'china space station', 'chinese space station', 'tianhe'],
+  20580: ['hubble', 'hst', 'hubble space telescope'],
+};
 const STAR_COLOR = '#ffffff', CON_COLOR = '#a78bff';
 
 let items = [], builtFor = -1, extra = null, extraPromise = null;
@@ -16,9 +22,11 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;',
 
 function sat2item(s) {
   const cat = state.CATEGORIES[s.cat] || state.CATEGORIES.other;
-  const key = norm(s.name);
-  return { kind: 'sat', id: s.id, name: s.name, sub: `${cat.label} · NORAD ${s.id}`, color: cat.color, key, compact: key.replace(/ /g, ''),
-           bonus: (s.cat === 'stations' ? 60 : 0) + (s.bright ? 25 : 0) + (s.cat === 'starlink' ? -40 : 0) + (s.cat === 'debris' ? -30 : 0), cat: s.cat };
+  const display = s.notable || s.name;          // `notable` = friendly display name (may be absent)
+  const aliases = (ALIASES[s.id] || []).map(norm);
+  const key = norm([display, s.name, ...aliases].join(' '));
+  return { kind: 'sat', id: s.id, name: display, aliases, sub: `${cat.label} · NORAD ${s.id}`, color: cat.color, key, compact: key.replace(/ /g, ''),
+           bonus: (aliases.length ? 150 : 0) + (s.notable ? 40 : 0) + (s.cat === 'stations' ? 60 : 0) + (s.bright ? 25 : 0) + (s.cat === 'starlink' ? -40 : 0) + (s.cat === 'debris' ? -30 : 0), cat: s.cat };
 }
 
 // Optional extras from data/sky/*.json (stars + constellations). Format-tolerant.
@@ -77,7 +85,8 @@ function score(it, q, qc, isNum) {
   if (isNum && it.kind === 'sat' && String(it.id).startsWith(q)) return 900 - String(it.id).length + q.length;
   const k = it.key;
   let s = -1;
-  if (k === q) s = 1000;
+  if (it.aliases?.length && it.aliases.some(a => a === q || (q.length >= 3 && a.startsWith(q)))) s = 1000;
+  else if (k === q) s = 1000;
   else if (k.startsWith(q)) s = 900 - Math.min(k.length - q.length, 80);
   else {
     const i = k.indexOf(' ' + q);

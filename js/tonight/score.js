@@ -31,7 +31,7 @@ export function computeScore({ hours, win, moonFrac, moon }) {
   return { score, word, cloud, vis, moonF, parts: { clear, moonF, length, visF } };
 }
 
-export function reasonText({ cloud, moon, win, tz, moonFrac }) {
+export function reasonText({ cloud, moon, win, moonFrac }) {
   const bits = [];
   if (cloud == null) bits.push('Cloud forecast unavailable');
   else bits.push(cloud < 15 ? 'Clear skies' : cloud < 35 ? 'Mostly clear' : cloud < 60 ? 'Partly cloudy' : cloud < 85 ? 'Mostly cloudy' : 'Overcast');
@@ -39,8 +39,8 @@ export function reasonText({ cloud, moon, win, tz, moonFrac }) {
     if (moon.illum < 0.08) bits.push('dark Moon');
     else if (moonFrac < 0.05) bits.push('Moon stays down');
     else if (moonFrac > 0.95 && moon.illum > 0.5) bits.push(`bright ${Math.round(moon.illum * 100)}% Moon all night`);
-    else if (moon.up && moon.set && moon.set < win.end + 3600e3) bits.push(`Moon sets at ${fmtTime(moon.set, tz)}`);
-    else if (!moon.up && moon.rise && moon.rise < win.end) bits.push(`Moon rises at ${fmtTime(moon.rise, tz)}`);
+    else if (moon.up && moon.set && moon.set < win.end + 3600e3) bits.push(`Moon sets at ${fmtTime(moon.set)}`);
+    else if (!moon.up && moon.rise && moon.rise < win.end) bits.push(`Moon rises at ${fmtTime(moon.rise)}`);
     else bits.push(`${Math.round(moon.illum * 100)}% Moon`);
   }
   return bits.join(', ');
