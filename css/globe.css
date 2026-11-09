@@ -1,0 +1,47 @@
+/* Orbit view */
+#view-globe { background: #03050a; overflow: hidden; }
+.globe-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; outline: none; }
+.globe-vignette {
+  position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(ellipse at 50% 50%, transparent 55%, rgba(2, 4, 10, 0.55) 100%);
+}
+.globe-tip, .globe-label {
+  position: absolute; left: 0; top: 0; pointer-events: none; white-space: nowrap;
+  opacity: 0; will-change: transform;
+}
+.globe-tip {
+  display: flex; align-items: center; gap: 8px; padding: 6px 11px; border-radius: 999px;
+  background: var(--glass-strong); border: 1px solid var(--glass-border-hi);
+  backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  font-size: 12px; box-shadow: var(--shadow); transition: opacity .12s; z-index: 5;
+}
+.globe-tip i { width: 8px; height: 8px; border-radius: 50%; box-shadow: 0 0 8px currentColor; flex: none; }
+.globe-tip b { font-weight: 600; letter-spacing: .01em; }
+.globe-tip span { color: var(--text-dim); font-size: 11px; }
+.globe-label {
+  font-family: var(--mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--text); text-shadow: 0 0 6px rgba(0,0,0,.9), 0 0 2px rgba(0,0,0,.9);
+  padding-left: 14px; transition: opacity .2s; z-index: 4;
+}
+.globe-label::before {
+  content: ''; position: absolute; left: 0; top: 50%; width: 10px; height: 1px; background: currentColor; opacity: .7;
+}
+.globe-label.iss { color: var(--sun); }
+.globe-label.sel { color: var(--accent); }
+.globe-controls {
+  position: absolute; left: 50%; bottom: calc(var(--timebar-h) + 22px); transform: translateX(-50%);
+  display: flex; gap: 2px; padding: 4px; border-radius: 999px; z-index: 6;
+}
+.globe-btn {
+  display: inline-flex; align-items: center; gap: 7px; padding: 7px 13px; border: 0; border-radius: 999px;
+  background: transparent; color: var(--text-dim); cursor: pointer; font-size: 12px;
+  transition: background .2s, color .2s;
+}
+.globe-btn:hover { background: rgba(92, 225, 255, .10); color: var(--text); }
+.globe-btn.on { color: var(--accent); background: rgba(92, 225, 255, .12); }
+@media (max-width: 760px) {
+  .globe-btn span { display: none; }
+  .globe-btn { padding: 9px 11px; }
+  .globe-controls { bottom: calc(var(--timebar-h) + 14px); }
+}
+.globe-fallback { position: absolute; inset: 0; display: grid; place-content: center; padding: 24px; text-align: center; color: var(--text-dim); max-width: 420px; margin: auto; }

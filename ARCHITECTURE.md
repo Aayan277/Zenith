@@ -1,4 +1,4 @@
-# Skywatch — architecture & module contracts
+# Zenith (codename skywatch) — architecture & module contracts
 
 Static site, no build step. Plain ES modules served by GitHub Pages.
 Third-party code comes from CDNs pinned to exact versions (see `index.html`):

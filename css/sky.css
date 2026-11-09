@@ -1,0 +1,43 @@
+/* Sky view ("look up") */
+#view-sky { background: #04060d; overflow: hidden; }
+#view-sky .sky-canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; cursor: default; touch-action: none; user-select: none; -webkit-user-select: none; }
+
+.sky-header {
+  position: absolute; top: 80px; left: 50%; transform: translateX(-50%);
+  max-width: calc(100% - 32px); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-size: 12px; letter-spacing: 0.08em; color: var(--text-dim); opacity: 0.8; pointer-events: none;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.7);
+}
+
+.sky-controls {
+  position: absolute; left: 50%; bottom: 88px; transform: translateX(-50%);
+  display: flex; flex-wrap: wrap; gap: 4px; padding: 5px; justify-content: center;
+  max-width: calc(100% - 32px); border-radius: 999px;
+}
+.sky-btn {
+  appearance: none; border: 1px solid transparent; background: transparent; color: var(--text-dim);
+  padding: 6px 12px; border-radius: 999px; font-size: 12px; font-weight: 500; letter-spacing: 0.02em;
+  cursor: pointer; transition: background .2s, color .2s, border-color .2s;
+}
+.sky-btn:hover { color: var(--text); background: rgba(255, 255, 255, 0.06); }
+.sky-btn.on { color: var(--accent); background: rgba(92, 225, 255, 0.12); border-color: rgba(92, 225, 255, 0.35); }
+.sky-btn[hidden] { display: none; }
+.sky-btn.sky-reset { color: var(--sun); }
+
+.sky-tip {
+  position: absolute; left: 0; top: 0; pointer-events: none; z-index: 5;
+  display: flex; flex-direction: column; gap: 1px; padding: 6px 10px; border-radius: 10px; white-space: nowrap;
+  background: var(--glass-strong); border: 1px solid var(--glass-border); box-shadow: var(--shadow);
+  backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+}
+.sky-tip[hidden] { display: none; }
+.sky-tip b { font-size: 13px; font-weight: 600; }
+.sky-tip span { font-size: 11px; color: var(--text-dim); font-family: var(--mono); }
+
+@media (max-width: 760px) {
+  .sky-header { top: 70px; font-size: 11px; letter-spacing: 0.04em; }
+  .sky-controls { top: 104px; bottom: auto; border-radius: 999px; flex-wrap: nowrap; overflow-x: auto; width: max-content; scrollbar-width: none; }
+  .sky-controls::-webkit-scrollbar { display: none; }
+  .sky-btn { white-space: nowrap; }
+  .sky-btn { padding: 6px 10px; font-size: 11.5px; }
+}

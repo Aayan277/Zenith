@@ -29,6 +29,9 @@ const state = {
   // Which satellite categories are visible (by CATEGORIES key).
   filters: { stations: true, starlink: true, navigation: true, weather: true, science: true,
              comms: true, earthobs: true, rocket: true, debris: false, other: true },
+  // When true, only "notable" satellites are shown (named famous objects,
+  // large radar cross-section, or bright). See sat.notable / sat.size in sats.json.
+  highlightsOnly: false,
   catalogReady: false,
 };
 
@@ -80,9 +83,11 @@ try {
   const saved = JSON.parse(localStorage.getItem('skywatch:prefs') || 'null');
   if (saved?.location) state.location = saved.location;
   if (saved?.filters) state.filters = { ...state.filters, ...saved.filters };
+  if (typeof saved?.highlightsOnly === 'boolean') state.highlightsOnly = saved.highlightsOnly;
 } catch {}
-const persist = () => { try { localStorage.setItem('skywatch:prefs', JSON.stringify({ location: state.location, filters: state.filters })); } catch {} };
+const persist = () => { try { localStorage.setItem('skywatch:prefs', JSON.stringify({ location: state.location, filters: state.filters, highlightsOnly: state.highlightsOnly })); } catch {} };
 on('location', persist);
 on('filters', persist);
+on('highlightsOnly', persist);
 
 if (typeof window !== 'undefined') window.__skywatchState = state; // debugging
