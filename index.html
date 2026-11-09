@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Skywatch</title>
+  <meta name="description" content="Live satellites, stars and planets above you. See what's overhead tonight." />
+  <meta name="theme-color" content="#05070d" />
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="css/base.css" />
+  <link rel="stylesheet" href="css/shell.css" />
+  <link rel="stylesheet" href="css/globe.css" />
+  <link rel="stylesheet" href="css/sky.css" />
+  <link rel="stylesheet" href="css/tonight.css" />
+
+  <!-- Globals: window.satellite (SGP4), window.Astronomy (astronomy-engine) -->
+  <script src="https://cdn.jsdelivr.net/npm/satellite.js@5.0.0/dist/satellite.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/astronomy-engine@2.1.19/astronomy.browser.min.js"></script>
+  <script type="importmap">
+    { "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    } }
+  </script>
+</head>
+<body>
+  <!-- Full-bleed views. Exactly one is visible (body[data-view]). -->
+  <main id="views">
+    <section id="view-globe" class="view" aria-label="Orbit view"></section>
+    <section id="view-sky" class="view" aria-label="Sky view"></section>
+  </main>
+
+  <!-- Floating chrome (owned by js/ui/*) -->
+  <header id="topbar"></header>          <!-- logo, view switch, search, layer filters -->
+  <aside id="panel-tonight"></aside>     <!-- left: tonight for your location (js/tonight) -->
+  <aside id="panel-detail"></aside>      <!-- right: selected object details (js/ui/detail.js) -->
+  <footer id="timebar"></footer>         <!-- bottom: live / scrub / speed (js/ui/timebar.js) -->
+  <div id="modal-root"></div>            <!-- location picker etc. -->
+  <div id="toasts"></div>
+
+  <div id="boot" aria-hidden="true"><div class="boot-orbit"><span></span></div><p>Calibrating the sky…</p></div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
