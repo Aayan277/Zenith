@@ -56,6 +56,15 @@ function fmtOffset(m) {
 
 const placeName = () => (state.get('location')?.name || '').split(',')[0].trim();
 let lastSec = -1;
+// Repaint cadence: smooth while scrubbing or fast-forwarding, ~4 Hz in normal
+// playback (the clock only shows seconds), and nothing while the tab is hidden.
+let pending = false;
+function schedule() {
+  if (pending || document.hidden) return;
+  pending = true;
+  const go = () => { pending = false; frame(); };
+  if (dragging || Math.abs(getRate()) > 1) requestAnimationFrame(go); else setTimeout(go, 250);
+}
 function frame() {
   const ms = now(), sec = Math.floor(ms / 1000);
   if (sec !== lastSec) {  // observer-local time, refreshed once per second
@@ -77,7 +86,7 @@ function frame() {
     paintRange();
     $.offset.textContent = fmtOffset(off);
   }
-  requestAnimationFrame(frame);
+  schedule();
 }
 
 function paintRange() {
@@ -198,5 +207,6 @@ export function init() {
   state.on('location', () => { marksKey = ''; computeMarks(); });
   computeMarks();
   setInterval(computeMarks, 60000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) frame(); });
   requestAnimationFrame(frame);
 }

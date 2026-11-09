@@ -9,7 +9,7 @@ import { lsGet, lsSet } from '../ui/notify.js';
 
 // Set to true once globe.js handles state.emit('focus', {kind:'latlon', lat, lon}) itself; the fallback fly below
 // then switches off so the two do not fight over the camera.
-const GLOBE_HANDLES_LATLON = false;
+const GLOBE_HANDLES_LATLON = true;
 const KEY_ON = 'zenith:launches:globe';
 const R_PAD = 1.004;
 

@@ -74,7 +74,7 @@ export async function init() {
   state.on('selection', s => { root.classList.toggle('detail-open', !!s && isMobile()); if (s && isMobile()) setSheet(false); });
   root.classList.toggle('detail-open', !!state.get('selection') && isMobile());
   state.on('passes', p => { if (p !== ctx.passes) { ctx.passes = p; ctx.passesPending = false; renderIss(); renderPasses(); } });
-  setInterval(tick, 1000);
+  setInterval(() => { if (!document.hidden) tick(); }, 1000);
   refreshAll();
 }
 

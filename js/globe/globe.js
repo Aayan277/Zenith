@@ -224,6 +224,8 @@ export async function init() {
       if (!sats.idToIndex.has(sel.id)) return;
       const id = sel.id;
       flyTo(satTarget(id), clamp(camera.position.length(), 1.7, 3.0), 1.5);
+    } else if (sel.kind === 'latlon') {
+      flyTo(() => latLonToVec(sel.lat, sel.lon), sel.dist ?? clamp(camera.position.length(), 1.6, 2.6), 1.5);
     }
   });
 
