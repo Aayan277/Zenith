@@ -81,12 +81,12 @@ function buildDom() {
       <button class="sky-btn" data-opt="mw" title="Milky Way">Milky Way</button>
       <button class="sky-btn" data-opt="grid" title="Altitude/azimuth grid, ecliptic and celestial equator">Grid</button>
       <button class="sky-btn" data-opt="sats" title="Satellites">Satellites</button>
-      <button class="sky-btn sky-orient" data-act="orient" title="Aim the view with your phone" hidden>Point phone</button>
+      <button class="sky-btn sky-orient" data-act="orient" title="Aim the view with your phone" hidden>Phone</button>
       <button class="sky-btn sky-reset" data-act="reset" title="Reset view (double-click)" hidden>Reset</button>
     </div>
     <div class="sky-hint glass" hidden>
       <svg viewBox="0 0 40 40" width="34" height="34" aria-hidden="true"><circle cx="20" cy="20" r="17" fill="none" stroke="currentColor" stroke-opacity=".6"/><circle cx="20" cy="20" r="9" fill="none" stroke="currentColor" stroke-opacity=".25" stroke-dasharray="2 3"/><circle cx="20" cy="20" r="2.2" fill="#5ce1ff"/></svg>
-      <div><b>Looking up</b><span>Center = straight up<br>Edge = horizon</span></div>
+      <div><b>Looking up</b><span>Center = straight up<em> · </em><br>Edge = horizon</span></div>
       <button class="sky-hint-x" aria-label="Dismiss hint">&times;</button>
     </div>
     <div class="sky-tip" role="tooltip" hidden></div>`;
@@ -155,16 +155,17 @@ function refreshUi() {
   let top = 100, bottom = H - 16;
   const tb = visibleRect('#topbar'); if (tb) top = Math.max(top, tb.bottom + 36);
   const ctl = controlsEl.getBoundingClientRect();
-  if (mobile) top = Math.max(top, ctl.bottom + 22);
+  const hintEl = root.querySelector('.sky-hint');
+  const hintH = mobile && hintEl && !hintEl.hidden ? hintEl.offsetHeight + 8 : 0;
+  if (mobile) top = Math.max(top, ctl.bottom + 16 + hintH);
   else bottom = Math.min(bottom, ctl.top - 6);
   const tl = visibleRect('#timebar'); if (tl) bottom = Math.min(bottom, tl.top - 8);
   if (mobile) { const sh = visibleRect('#panel-tonight'); if (sh && sh.top > top + 180) bottom = Math.min(bottom, sh.top - 8); }
-  if (bottom - top < 220) { top = Math.min(top, 100); bottom = Math.max(bottom, top + 220); }
+  if (bottom - top < 150) bottom = top + 150;
   const k = `${top | 0}|${bottom | 0}`;
   if (k !== `${uiRect.top | 0}|${uiRect.bottom | 0}`) skyKey = '';
-  uiRect = { top, bottom };
-  const hint = root.querySelector('.sky-hint');
-  if (mobile && hint && !hint.hidden) hint.style.top = Math.max(top, bottom - hint.offsetHeight - 2) + 'px'; else if (hint) hint.style.top = '';
+  uiRect = { top, bottom }; window.__skyUi = { top, bottom, hintH, ctlB: ctl.bottom };
+  if (hintEl) hintEl.style.top = mobile && !hintEl.hidden ? (ctl.bottom + 6) + 'px' : '';
 }
 function layout() {
   if (!uiRect.bottom || performance.now() - uiAt > 300) refreshUi();
@@ -284,8 +285,10 @@ function frame(ts, dt) {
   if (opts.sats) drawSats(ts, simNow);
   drawPassArc(simNow);
   queueSelectionLabel(simNow);
-  flushLabels();
+  // Labels go on top of the ground so ones near the horizon aren't clipped
+  // (objects below the horizon never queue a label).
   drawGround(night);
+  flushLabels();
   drawCompass();
   drawSelection(ts, simNow);
   updateHeader(simNow, loc);
@@ -435,11 +438,11 @@ function drawConstellations(night) {
   }
   if (opts.labels) {
     const M = F.M;
-    const fs = cam.zoom < 1.6 ? 9 : Math.round(9 * zs + 1);
+    const fs = compact() ? 8 : cam.zoom < 1.6 ? 9 : Math.round(9 * zs + 1);
     const minorA = clamp((cam.zoom - 1.4) / 1.3, 0, 1);
     for (const c of data.cons) {
       const isHi = c.id === hi, sel = selection?.kind === 'constellation' && selection.id === c.id;
-      const major = c.rank < 36;
+      const major = c.rank < (compact() ? 16 : 36);
       const k = major ? 1 : minorA;
       if (k <= 0.02 && !isHi) continue;
       const v = applyM(M, c.label[0], c.label[1], c.label[2], tmpv);
@@ -504,8 +507,8 @@ function drawStars(ts, night) {
   ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
   // star names (greedy, brightest first, skipping overlaps)
   if (opts.labels && night > 0.05) {
-    const lm = Math.min(4.6, 2.2 + 0.9 * Math.log2(cam.zoom));
-    const fs = Math.round(11 * Math.min(1.2, zs));
+    const lm = Math.min(4.6, 2.2 + 0.9 * Math.log2(cam.zoom)) - (compact() ? 0.8 : 0);
+    const fs = Math.round((compact() ? 10 : 11) * Math.min(1.2, zs));
     ctx.font = `500 ${fs}px ${FONT}`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     for (const i of st.labelled) {
       const m = mag[i]; if (m > lm) break;
@@ -621,9 +624,10 @@ function drawBodies(ts, simNow) {
     if (isPl) { const c = hexToRgb(b.color); fill = sunAlt > -3 ? `rgba(${c[0] * 0.35 | 0},${c[1] * 0.35 | 0},${c[2] * 0.45 | 0},${la})` : `rgba(${lerp(c[0], 255, 0.25) | 0},${lerp(c[1], 255, 0.25) | 0},${lerp(c[2], 255, 0.25) | 0},${la})`; }
     else fill = b.name === 'Sun' ? 'rgba(255,255,255,0.92)' : (sunAlt > -3 ? 'rgba(20,40,80,0.85)' : 'rgba(235,242,255,0.9)');
     const sel = selection?.kind === 'body' && selection.id === b.name;
-    queueLabel('b:' + b.name, b.name, x, y, r + 3, sel ? 0 : isPl ? 2 : 1, 12, fill, 'side', 0);
+    queueLabel('b:' + b.name, b.name, x, y, r + 3, sel ? 0 : isPl ? 2 : 1, compact() ? 11 : 12, fill, 'side', 0);
   }
 }
+const compact = () => W <= 760;
 const hexToRgb = h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
 
 function drawMoon(b, x, y, R) {
@@ -696,7 +700,7 @@ function drawSats(ts, simNow) {
   for (let c = 0; c < K; c++) {
     const col = state.CATEGORIES[CAT_KEYS[c]];
     const size = (col.size || 1) * zs;
-    const rr = 0.55 + 0.5 * size;
+    const rr = (0.55 + 0.5 * size) * (compact() ? 0.72 : 1);
     ctx.fillStyle = col.color;
     for (let q = counts[c]; q < counts[c + 1]; q++) {
       const j = order[q]; if (!ok[j]) continue;
@@ -766,8 +770,7 @@ function drawPassArc(simNow) {
   }
   ctx.stroke(); ctx.setLineDash([]);
   if (best && onScreen(best.x, best.y, 0)) {
-    ctx.font = `500 11px ${FONT}`; ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(255,200,120,0.9)';
-    ctx.fillText(`ISS pass ${fmtLocal(p.max, { hour: 'numeric', minute: '2-digit' })} · max ${Math.round(p.maxEl ?? Math.asin(best.u) * R2D)}°`, clamp(best.x, 80, W - 80), best.y - 12);
+    queueLabel('pass', `ISS pass ${fmtLocal(p.max, { hour: 'numeric', minute: '2-digit' })} · max ${Math.round(p.maxEl ?? Math.asin(best.u) * R2D)}°`, best.x, best.y, 2, 3.8, compact() ? 10 : 11, 'rgba(255,200,120,0.92)', 'center', 0);
   }
   ctx.restore();
 }
