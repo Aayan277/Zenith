@@ -1,20 +1,21 @@
 // Detail-panel providers for sky objects: body, star, constellation.
 import * as state from '../state.js';
+import { fmtLocal, tzLabel } from '../util/time.js';
 import { computeBodies, makeFrame, applyM, enuToAltAz, compass, riseTransitSet, defineStar, observer,
   bvToTemp, tempToRGB, spectralClass, raDecToVec, BODY_COLORS, AU_KM, R2D } from './astro.js';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const GREEK = { α: 'Alpha', β: 'Beta', γ: 'Gamma', δ: 'Delta', ε: 'Epsilon', ζ: 'Zeta', η: 'Eta', θ: 'Theta', ι: 'Iota', κ: 'Kappa', λ: 'Lambda', μ: 'Mu', ν: 'Nu', ξ: 'Xi', ο: 'Omicron', π: 'Pi', ρ: 'Rho', σ: 'Sigma', τ: 'Tau', υ: 'Upsilon', φ: 'Phi', χ: 'Chi', ψ: 'Psi', ω: 'Omega' };
 
-const pad = n => String(n).padStart(2, '0');
+const dayKey = ms => fmtLocal(ms, { year: 'numeric', month: 'numeric', day: 'numeric' });
 export function fmtTime(d, refMs) {
   if (!d) return '—';
-  const t = new Date(d), r = new Date(refMs);
-  const same = t.toDateString() === r.toDateString();
-  const hm = `${pad(t.getHours())}:${pad(t.getMinutes())}`;
-  if (same) return hm;
-  return t.getTime() > r.getTime() ? `${hm} (tomorrow)` : `${hm} (yesterday)`;
+  const t = new Date(d).getTime();
+  const hm = fmtLocal(t, { hour: 'numeric', minute: '2-digit' }) + ' ' + tzLabel(t);
+  if (dayKey(t) === dayKey(refMs)) return hm;
+  return t > refMs ? `${hm} (tomorrow)` : `${hm} (yesterday)`;
 }
+const fmtDay = d => fmtLocal(d.getTime(), { month: 'short', day: 'numeric' });
 const f1 = (x, d = 1) => Number(x).toFixed(d);
 
 function moonPhaseName(angle) {
@@ -60,8 +61,8 @@ export function registerProviders(ctx) {
       rows.push({ label: 'Age', value: f1(ph / 360 * 29.53) + ' days' });
       try {
         const t = A().MakeTime(new Date(nowMs));
-        rows.push({ label: 'Next full moon', value: A().SearchMoonPhase(180, t, 40).date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) });
-        rows.push({ label: 'Next new moon', value: A().SearchMoonPhase(0, t, 40).date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) });
+        rows.push({ label: 'Next full moon', value: fmtDay(A().SearchMoonPhase(180, t, 40).date) });
+        rows.push({ label: 'Next new moon', value: fmtDay(A().SearchMoonPhase(0, t, 40).date) });
       } catch {}
     } else {
       stats.push({ label: 'Magnitude', value: f1(b.mag), unit: '' });

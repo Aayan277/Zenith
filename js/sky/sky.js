@@ -7,6 +7,7 @@ import { D2R, R2D, makeFrame, computeBodies, applyM, enuToAltAz, altAzToEnu, lim
 import { loadSkyData, makeStarSprites, makeGlowSprite, bvBucket, BV_BUCKETS, MW_W, MW_H } from './data.js';
 import { initSats, setActive as setSatsActive, setObserver, getFrame as getSatFrame, satPosition, skyTrack, CAT_KEYS } from './sats.js';
 import { registerProviders, fmtTime } from './details.js';
+import { fmtLocal, tzLabel } from '../util/time.js';
 
 const TAU = Math.PI * 2;
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
@@ -48,6 +49,7 @@ export async function init() {
   loadPrefs();
   buildDom();
   try { data = await loadSkyData(); } catch (e) { console.error('[sky] data', e); state.emit('toast', 'Could not load star data'); return; }
+  [...data.cons].sort((a, b) => b.segs.reduce((n, g) => n + g.length, 0) - a.segs.reduce((n, g) => n + g.length, 0)).forEach((c, i) => { c.rank = i; });
   sprites = makeStarSprites();
   sunGlow = makeGlowSprite('255,236,170', 128);
   moonGlow = makeGlowSprite('200,215,255', 128);
@@ -82,12 +84,21 @@ function buildDom() {
       <button class="sky-btn sky-orient" data-act="orient" title="Aim the view with your phone" hidden>Point phone</button>
       <button class="sky-btn sky-reset" data-act="reset" title="Reset view (double-click)" hidden>Reset</button>
     </div>
+    <div class="sky-hint glass" hidden>
+      <svg viewBox="0 0 40 40" width="34" height="34" aria-hidden="true"><circle cx="20" cy="20" r="17" fill="none" stroke="currentColor" stroke-opacity=".6"/><circle cx="20" cy="20" r="9" fill="none" stroke="currentColor" stroke-opacity=".25" stroke-dasharray="2 3"/><circle cx="20" cy="20" r="2.2" fill="#5ce1ff"/></svg>
+      <div><b>Looking up</b><span>Center = straight up<br>Edge = horizon</span></div>
+      <button class="sky-hint-x" aria-label="Dismiss hint">&times;</button>
+    </div>
     <div class="sky-tip" role="tooltip" hidden></div>`;
   canvas = root.querySelector('canvas');
   ctx = canvas.getContext('2d');
   tip = root.querySelector('.sky-tip');
   headerEl = root.querySelector('.sky-header');
   controlsEl = root.querySelector('.sky-controls');
+  const hint = root.querySelector('.sky-hint');
+  let seen = false; try { seen = localStorage.getItem('skywatch:sky:hint') === '1'; } catch {}
+  hint.hidden = seen;
+  hint.querySelector('.sky-hint-x').addEventListener('click', () => { hint.hidden = true; try { localStorage.setItem('skywatch:sky:hint', '1'); } catch {} });
   syncButtons();
   controlsEl.addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
@@ -108,7 +119,7 @@ function resize() {
   dpr = Math.min(window.devicePixelRatio || 1, 2);
   canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
   canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
-  skyKey = '';
+  skyKey = ''; uiRect.bottom = 0;
 }
 
 function setActive(on) {
@@ -131,12 +142,38 @@ function wire() {
 }
 
 // ---- camera -----------------------------------------------------------------
+// Free area for the dome, measured from the real chrome (topbar, controls, timebar, mobile sheet).
+let uiRect = { top: 110, bottom: 0, left: 0, right: 0 }, uiAt = 0;
+function visibleRect(sel) {
+  const el = document.querySelector(sel); if (!el) return null;
+  const r = el.getBoundingClientRect();
+  return r.width > 0 && r.height > 0 && getComputedStyle(el).display !== 'none' ? r : null;
+}
+function refreshUi() {
+  uiAt = performance.now();
+  const mobile = W <= 760;
+  let top = 100, bottom = H - 16;
+  const tb = visibleRect('#topbar'); if (tb) top = Math.max(top, tb.bottom + 36);
+  const ctl = controlsEl.getBoundingClientRect();
+  if (mobile) top = Math.max(top, ctl.bottom + 22);
+  else bottom = Math.min(bottom, ctl.top - 6);
+  const tl = visibleRect('#timebar'); if (tl) bottom = Math.min(bottom, tl.top - 8);
+  if (mobile) { const sh = visibleRect('#panel-tonight'); if (sh && sh.top > top + 180) bottom = Math.min(bottom, sh.top - 8); }
+  if (bottom - top < 220) { top = Math.min(top, 100); bottom = Math.max(bottom, top + 220); }
+  const k = `${top | 0}|${bottom | 0}`;
+  if (k !== `${uiRect.top | 0}|${uiRect.bottom | 0}`) skyKey = '';
+  uiRect = { top, bottom };
+  const hint = root.querySelector('.sky-hint');
+  if (mobile && hint && !hint.hidden) hint.style.top = Math.max(top, bottom - hint.offsetHeight - 2) + 'px'; else if (hint) hint.style.top = '';
+}
 function layout() {
-  const freeW = W > 900 ? W - 720 : W;
-  const freeH = Math.max(200, H - 150);
-  S = (W <= 760 ? 0.235 : 0.205) * Math.min(freeW, freeH) * cam.zoom;
+  if (!uiRect.bottom || performance.now() - uiAt > 300) refreshUi();
+  const freeW = W > 900 ? W - 720 : W - 16;
+  const availH = uiRect.bottom - uiRect.top;
+  const S0 = Math.max(40, Math.min((availH / 2 - 16) / 2.2, (freeW / 2 - 8) / 2.2));
+  S = S0 * cam.zoom;
   cx = W / 2;
-  cy = W > 900 ? H / 2 + 2 : W <= 760 ? (150 + H - 150) / 2 : H / 2;
+  cy = (uiRect.top + uiRect.bottom) / 2;
   const a = cam.alt * D2R, A = cam.az * D2R;
   const sa = Math.sin(a), ca = Math.cos(a), sA = Math.sin(A), cA = Math.cos(A);
   f0 = ca * sA; f1 = ca * cA; f2 = sa;
@@ -237,6 +274,7 @@ function frame(ts, dt) {
 
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+  labelQ.length = 0; obst.length = 0;
   drawSkyBackground(simNow);
   const night = clamp((lim - 1) / 3.5, 0, 1);   // 0 day .. 1 night, for overlays
   if (opts.grid) drawGrid(ts);
@@ -245,6 +283,8 @@ function frame(ts, dt) {
   drawBodies(ts, simNow);
   if (opts.sats) drawSats(ts, simNow);
   drawPassArc(simNow);
+  queueSelectionLabel(simNow);
+  flushLabels();
   drawGround(night);
   drawCompass();
   drawSelection(ts, simNow);
@@ -394,25 +434,25 @@ function drawConstellations(night) {
     }
   }
   if (opts.labels) {
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.font = `500 ${Math.round(10 * zs + 1)}px ${FONT}`;
-    try { ctx.letterSpacing = '3px'; } catch {}
     const M = F.M;
-    conLabelPos.length = 0;
+    const fs = cam.zoom < 1.6 ? 9 : Math.round(9 * zs + 1);
+    const minorA = clamp((cam.zoom - 1.4) / 1.3, 0, 1);
     for (const c of data.cons) {
+      const isHi = c.id === hi, sel = selection?.kind === 'constellation' && selection.id === c.id;
+      const major = c.rank < 36;
+      const k = major ? 1 : minorA;
+      if (k <= 0.02 && !isHi) continue;
       const v = applyM(M, c.label[0], c.label[1], c.label[2], tmpv);
       if (v[2] < -0.05) continue;
       if (!proj(v[0], v[1], v[2]) || !onScreen(PX, PY, 40)) continue;
-      const isHi = c.id === hi;
-      ctx.fillStyle = `rgba(150,205,255,${(isHi ? 0.9 : 0.27) * night})`;
-      ctx.fillText(c.name.toUpperCase(), PX + 1.5, PY);
-      conLabelPos.push(c, PX, PY);
+      const a = (isHi ? 0.9 : (cam.zoom < 1.6 ? 0.19 : 0.27) * k) * night;
+      queueLabel('c:' + c.id, c.name.toUpperCase(), PX, PY, 0, sel ? 0 : 5, fs, `rgba(150,205,255,${a})`, 'center', 3, c);
     }
-    try { ctx.letterSpacing = '0px'; } catch {}
   }
 }
 const tmpv = [0, 0, 0];
 const conLabelPos = [];
+
 function conPath(c) {
   const M = F.M;
   for (const seg of c.segs) {
@@ -467,7 +507,6 @@ function drawStars(ts, night) {
     const lm = Math.min(4.6, 2.2 + 0.9 * Math.log2(cam.zoom));
     const fs = Math.round(11 * Math.min(1.2, zs));
     ctx.font = `500 ${fs}px ${FONT}`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-    const placed = labelRects; placed.length = 0;
     for (const i of st.labelled) {
       const m = mag[i]; if (m > lm) break;
       const x = vec[i * 3], y = vec[i * 3 + 1], z = vec[i * 3 + 2];
@@ -476,18 +515,63 @@ function drawStars(ts, night) {
       const rc = (0.45 + 0.43 * Math.pow(Math.max(0, 5.9 - m), 1.12)) * zs;
       const al = clamp((lm - m) / 0.7, 0, 1) * night * clamp((lim - m) / 1.5, 0, 1);
       if (al < 0.03) continue;
-      const name = data.names.get(st.hip[i]).name;
-      const w = ctx.measureText(name).width, lx = PX + rc * 1.6 + 5, ly = PY - fs / 2;
-      let hit = false;
-      for (let q = 0; q < placed.length; q += 4) if (lx < placed[q + 2] && lx + w > placed[q] && ly < placed[q + 3] && ly + fs > placed[q + 1]) { hit = true; break; }
-      if (hit) continue;
-      placed.push(lx - 2, ly - 1, lx + w + 2, ly + fs + 1);
-      ctx.fillStyle = `rgba(214,228,255,${0.66 * al})`;
-      ctx.fillText(name, lx, PY + 1);
+      const isSel = selection?.kind === 'star' && selection.id === st.hip[i];
+      queueLabel('s:' + st.hip[i], data.names.get(st.hip[i]).name, PX, PY, rc * 1.4 + 2, isSel ? 0 : 3 + m / 10, fs, `rgba(214,228,255,${0.66 * al})`, 'side', 0);
     }
   }
 }
-const labelRects = [];
+
+// ---- label placement ----------------------------------------------------------
+const labelQ = [], obst = [], placedR = [], widthCache = new Map();
+function queueLabel(key, text, x, y, r, prio, fs, fill, mode, spacing, ref) {
+  labelQ.push({ key, text, x, y, r, prio, fs, fill, mode, spacing, ref });
+}
+function textW(text, fs, spacing, weight) {
+  const k = weight + fs + '|' + spacing + '|' + text;
+  let w = widthCache.get(k);
+  if (w === undefined) {
+    ctx.font = `${weight} ${fs}px ${FONT}`;
+    try { ctx.letterSpacing = spacing + 'px'; } catch {}
+    w = ctx.measureText(text).width;
+    try { ctx.letterSpacing = '0px'; } catch {}
+    if (widthCache.size > 600) widthCache.clear();
+    widthCache.set(k, w);
+  }
+  return w;
+}
+const overlaps = (x0, y0, x1, y1, arr) => { for (let q = 0; q < arr.length; q += 4) if (x0 < arr[q + 2] && x1 > arr[q] && y0 < arr[q + 3] && y1 > arr[q + 1]) return true; return false; };
+function flushLabels() {
+  labelQ.sort((a, b) => a.prio - b.prio);
+  placedR.length = 0; conLabelPos.length = 0;
+  const done = new Set();
+  ctx.textBaseline = 'top'; ctx.textAlign = 'left';
+  for (const L of labelQ) {
+    if (done.has(L.key)) continue;
+    const weight = L.prio === 0 ? 600 : 500;
+    const w = textW(L.text, L.fs, L.spacing, weight) + 2, h = L.fs + 2;
+    const d = L.r + 4, x = L.x, y = L.y;
+    let cands;
+    if (L.mode === 'center') cands = [[x - w / 2, y - h / 2], [x - w / 2, y - h * 1.5], [x - w / 2, y + h * 0.6]];
+    else cands = [[x + d, y - h / 2], [x - d - w, y - h / 2], [x - w / 2, y - d - h], [x - w / 2, y + d],
+      [x + d * 0.7, y - d * 0.7 - h], [x + d * 0.7, y + d * 0.7], [x - d * 0.7 - w, y - d * 0.7 - h], [x - d * 0.7 - w, y + d * 0.7]];
+    let pick = null;
+    for (const c of cands) {
+      const x0 = c[0], y0 = c[1], x1 = x0 + w, y1 = y0 + h;
+      if (x0 < 4 || x1 > W - 4 || y0 < 4 || y1 > H - 4) continue;
+      if (overlaps(x0, y0, x1, y1, placedR) || overlaps(x0, y0, x1, y1, obst)) continue;
+      pick = c; break;
+    }
+    if (!pick) continue;
+    done.add(L.key);
+    placedR.push(pick[0] - 1, pick[1], pick[0] + w + 1, pick[1] + h);
+    ctx.font = `${weight} ${L.fs}px ${FONT}`; ctx.fillStyle = L.fill;
+    try { ctx.letterSpacing = L.spacing + 'px'; } catch {}
+    ctx.fillText(L.text, pick[0] + 1, pick[1] + 1);
+    try { ctx.letterSpacing = '0px'; } catch {}
+    if (L.ref && L.ref.segs) conLabelPos.push(L.ref, pick[0] + w / 2, pick[1] + h / 2);
+  }
+  ctx.textBaseline = 'middle';
+}
 
 // ---- Sun, Moon, planets ---------------------------------------------------------
 const drawn = []; // pickable bodies this frame: {id, x, y, r}
@@ -526,14 +610,21 @@ function drawBodies(ts, simNow) {
       ctx.globalAlpha = 1;
     }
     drawn.push({ id: b.name, x, y, r: Math.max(r, 7), b });
-    // label
-    ctx.font = `500 12px ${FONT}`; ctx.textAlign = 'left';
-    const la = b.name === 'Sun' || b.name === 'Moon' ? 0.85 : 0.8 * vis;
-    ctx.fillStyle = sunAlt > -3 ? `rgba(20,40,80,${la})` : `rgba(235,242,255,${la})`;
-    if (sunAlt > -3 && (b.name === 'Sun')) ctx.fillStyle = 'rgba(255,255,255,0.9)';
-    ctx.fillText(b.name, x + r + 7, y + 1);
+    const isPl = b.name !== 'Sun' && b.name !== 'Moon';
+    if (isPl && vis > 0.05) { // tiny coloured halo ring
+      ctx.strokeStyle = b.color; ctx.globalAlpha = 0.55 * vis; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(x, y, r + 4.5, 0, TAU); ctx.stroke(); ctx.globalAlpha = 1;
+    }
+    obst.push(x - r - 3, y - r - 3, x + r + 3, y + r + 3);
+    const la = isPl ? 0.95 * vis : 0.9;
+    let fill;
+    if (isPl) { const c = hexToRgb(b.color); fill = sunAlt > -3 ? `rgba(${c[0] * 0.35 | 0},${c[1] * 0.35 | 0},${c[2] * 0.45 | 0},${la})` : `rgba(${lerp(c[0], 255, 0.25) | 0},${lerp(c[1], 255, 0.25) | 0},${lerp(c[2], 255, 0.25) | 0},${la})`; }
+    else fill = b.name === 'Sun' ? 'rgba(255,255,255,0.92)' : (sunAlt > -3 ? 'rgba(20,40,80,0.85)' : 'rgba(235,242,255,0.9)');
+    const sel = selection?.kind === 'body' && selection.id === b.name;
+    queueLabel('b:' + b.name, b.name, x, y, r + 3, sel ? 0 : isPl ? 2 : 1, 12, fill, 'side', 0);
   }
 }
+const hexToRgb = h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
 
 function drawMoon(b, x, y, R) {
   // glow
@@ -630,8 +721,7 @@ function drawSats(ts, simNow) {
     const id = fr.ids[fr.idx[j]];
     if (fr.cat[j] === 0 && fr.lit[j] || id === selId) {
       const s = lookupSat(id);
-      ctx.fillStyle = `rgba(255,214,150,${dayFade * 0.95})`;
-      ctx.fillText(s?.name || String(id), posX[j] + 9, posY[j] + 1);
+      queueLabel('t:' + id, s?.name || String(id), posX[j], posY[j], 5, id === selId ? 0 : 3.5, 11, `rgba(255,214,150,${dayFade * 0.95})`, 'side', 0);
     }
   }
   // selected satellite path (±10 min)
@@ -677,8 +767,7 @@ function drawPassArc(simNow) {
   ctx.stroke(); ctx.setLineDash([]);
   if (best && onScreen(best.x, best.y, 0)) {
     ctx.font = `500 11px ${FONT}`; ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(255,200,120,0.9)';
-    const d = new Date(p.max);
-    ctx.fillText(`ISS pass ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} · max ${Math.round(p.maxEl ?? Math.asin(best.u) * R2D)}°`, best.x, best.y - 12);
+    ctx.fillText(`ISS pass ${fmtLocal(p.max, { hour: 'numeric', minute: '2-digit' })} · max ${Math.round(p.maxEl ?? Math.asin(best.u) * R2D)}°`, clamp(best.x, 80, W - 80), best.y - 12);
   }
   ctx.restore();
 }
@@ -770,6 +859,13 @@ function objectEnu(kind, id, simNow) {
   if (kind === 'constellation') { const c = data.consById.get(id); return c ? applyM(F.M, c.label[0], c.label[1], c.label[2]) : null; }
   if (kind === 'sat') { const p = satPosition(id, simNow); return p ? [p.e, p.n, p.u] : null; }
   return null;
+}
+function queueSelectionLabel(simNow) {
+  if (!selection || selection.kind === 'body' || selection.kind === 'sat' || selection.kind === 'constellation') return;
+  const v = objectEnu(selection.kind, selection.id, simNow);
+  if (!v || v[2] < 0 || !proj(v[0], v[1], v[2]) || !onScreen(PX, PY, 0)) return;
+  const nm = data.names.get(selection.id);
+  queueLabel('s:' + selection.id, nm?.name || (nm?.bayer ? `${nm.bayer} ${nm.con}` : `HIP ${selection.id}`), PX, PY, 14, 0, 11, 'rgba(255,255,255,0.95)', 'side', 0);
 }
 function drawSelection(ts, simNow) {
   if (!selection) return;
@@ -943,9 +1039,8 @@ function focusOn(req) {
 let lastHeader = 0;
 function updateHeader(simNow, loc) {
   const t = performance.now(); if (t - lastHeader < 500) return; lastHeader = t;
-  const d = new Date(simNow);
-  const when = d.toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-  const txt = `Your sky · ${loc.name || 'Unknown location'} · ${when} · ${twilightName(sunAlt)}`;
+  const place = (loc.name || 'Unknown location').split(',')[0];
+  const txt = `Your sky · ${place} · ${fmtLocal(simNow, { hour: 'numeric', minute: '2-digit' }, loc)} ${tzLabel(simNow, loc)} · ${twilightName(sunAlt)}`;
   if (headerEl.textContent !== txt) headerEl.textContent = txt;
 }
 
