@@ -61,7 +61,7 @@ export async function init() {
 
   // ---------- DOM chrome ----------
   const tip = el('div', 'globe-tip', host);
-  const issLabel = el('div', 'globe-label iss', host); issLabel.textContent = 'ISS';
+  const labelPool = [];
   const selLabel = el('div', 'globe-label sel', host);
   const vignette = el('div', 'globe-vignette', host);
   const ctl = el('div', 'globe-controls glass', host);
@@ -213,6 +213,8 @@ export async function init() {
 
   state.on('filters', (f) => sats.setFilters(f));
   sats.setFilters(state.get('filters'));
+  state.on('highlightsOnly', (v) => sats.setHighlightsOnly(v));
+  sats.highlightsOnly = !!state.get('highlightsOnly');
 
   function applyLocation() { const l = state.get('location'); observer.set(l.lat, l.lon); }
   state.on('location', applyLocation);
@@ -232,6 +234,7 @@ export async function init() {
   loadCatalog().then(() => {
     sats.setCatalog(allSats());
     sats.setFilters(state.get('filters'));
+    sats.setHighlightsOnly(state.get('highlightsOnly'));
     if (pendingTick) { const t = pendingTick; pendingTick = null; handleTick(t); }
     const sel = state.get('selection'); if (sel) onSelection(sel);
     maybeIntro();
@@ -298,6 +301,46 @@ export async function init() {
       tip.style.transform = `translate(${x}px, ${y}px)`;
     }
   }
+
+  // ---------- notable labels (declutter by zoom + screen collisions) ----------
+  const lp = new THREE.Vector3(), lscr = { x: 0, y: 0 };
+  function placeNotableLabels(dist) {
+    const budget = dist > 7 ? 5 : dist > 4.5 ? 8 : dist > 3.2 ? 14 : dist > 2.2 ? 22 : 40;
+    const cands = [];
+    const filters = state.get('filters');
+    for (const i of sats.notable) {
+      if (!sats.visible[sats.catIdx[i]] || (sats.highlightsOnly && !sats.hl[i])) continue;
+      if (sats.list[i].id === selId) continue;
+      if (!sats.posOf(i, lp)) continue;
+      if (!toScreen(lp, lscr) || lscr.x < 0 || lscr.x > W || lscr.y < 0 || lscr.y > H || occluded(lp)) continue;
+      const s = sats.list[i];
+      // priority: ISS, then stations/vehicles, then everything else
+      const pr = s.id === ISS_ID ? 0 : s.cat === 'stations' ? 1 : 2;
+      cands.push({ x: lscr.x, y: lscr.y, name: s.notable, id: s.id, cat: s.cat, pr });
+    }
+    cands.sort((a, b) => a.pr - b.pr);
+    const boxes = [];
+    if (selLabel.style.opacity === '1' && hasSelBox) boxes.push(hasSelBox);
+    let used = 0;
+    for (const c of cands) {
+      if (used >= budget) break;
+      const w = c.name.length * 7.2 + 26, h = 16;
+      const bx = c.x + 6, by = c.y - 22;
+      let hit = false;
+      for (const b of boxes) if (bx < b.x + b.w && bx + w > b.x && by < b.y + b.h && by + h > b.y) { hit = true; break; }
+      if (hit) continue;
+      boxes.push({ x: bx, y: by, w, h });
+      let d = labelPool[used];
+      if (!d) { d = el('div', 'globe-label', host); labelPool[used] = d; }
+      if (d.dataset.n !== c.name) { d.textContent = c.name; d.dataset.n = c.name; }
+      d.classList.toggle('iss', c.pr === 0); d.classList.toggle('stn', c.pr === 1);
+      d.style.transform = `translate(${c.x + 14}px, ${c.y - 26}px)`;
+      d.style.opacity = 1;
+      used++;
+    }
+    for (let k = used; k < labelPool.length; k++) labelPool[k].style.opacity = 0;
+  }
+  let hasSelBox = null;
 
   // ---------- render loop ----------
   let raf = 0, offTick = null, last = performance.now(), hideTimer = 0;
@@ -366,9 +409,9 @@ export async function init() {
     renderer.render(scene, camera);
 
     // labels
-    if (hasIss) place(issLabel, issPos, 14, -22); else issLabel.style.opacity = 0;
-    if (hasSel && selId !== ISS_ID) place(selLabel, satPos, 18, -26); else selLabel.style.opacity = 0;
-    if (hasSel && selId === ISS_ID) { /* ISS label doubles as the selection label */ }
+    placeNotableLabels(dist);
+    if (hasSel) { place(selLabel, satPos, 18, -26); hasSelBox = selLabel.style.opacity === '1' ? { x: scr.x + 12, y: scr.y - 30, w: selLabel.textContent.length * 8 + 26, h: 18 } : null; }
+    else { selLabel.style.opacity = 0; hasSelBox = null; }
     placeTip();
   }
 

@@ -30,7 +30,7 @@ export function ecefToEnu(x, y, z, out = [0, 0, 0]) {
 
 let cap = 0;
 let E, N, U, VE, VN, VU;      // current ENU (km) and velocity (km/s)
-let cat, lit, ids;
+let cat, lit, ids, hi;
 let vis, nVis = 0;            // indices of sats above horizon
 let tickTime = 0, tickDt = 0, n = 0;
 let hasData = false, catReady = false, lastIdsKey = '';
@@ -47,7 +47,7 @@ function ensure(m) {
   cap = Math.ceil(m * 1.2);
   E = new Float32Array(cap); N = new Float32Array(cap); U = new Float32Array(cap);
   VE = new Float32Array(cap); VN = new Float32Array(cap); VU = new Float32Array(cap);
-  cat = new Uint8Array(cap); lit = new Uint8Array(cap); vis = new Int32Array(cap);
+  cat = new Uint8Array(cap); hi = new Uint8Array(cap); lit = new Uint8Array(cap); vis = new Int32Array(cap);
   frame.idx = new Int32Array(cap); frame.dx = new Float32Array(cap); frame.dy = new Float32Array(cap);
   frame.dz = new Float32Array(cap); frame.range = new Float32Array(cap); frame.cat = new Uint8Array(cap);
   frame.lit = new Uint8Array(cap);
@@ -79,6 +79,7 @@ function onTick(tick) {
     let ok = false;
     for (let i = 0; i < m; i++) {
       const s = getSat(tick.ids[i]); if (s) ok = true;
+      hi[i] = s && (s.notable || s.bright || s.size === 'L') ? 1 : 0;
       cat[i] = s && CAT_INDEX[s.cat] !== undefined ? CAT_INDEX[s.cat] : CAT_INDEX.other;
     }
     catReady = ok;
@@ -107,11 +108,13 @@ export function getFrame(simNow, filters, includeShadow, selectedId) {
   const span = Math.max(1.5, 3 * tickDt);
   let dtx = (simNow - tickTime) / 1000; dtx = Math.max(-span, Math.min(span, dtx));
   const allow = CAT_KEYS.map(k => filters[k] !== false);
+  const hlOnly = !!state.get('highlightsOnly');
   for (let j = 0; j < nVis; j++) {
     const i = vis[j];
     const isSel = selectedId != null && ids[i] === selectedId;
     if (!isSel) {
       if (!allow[cat[i]]) continue;
+      if (hlOnly && !hi[i]) continue;
       if (!lit[i] && !includeShadow) continue;
     }
     const e = E[i] + VE[i] * dtx, nn = N[i] + VN[i] * dtx, u = U[i] + VU[i] * dtx;

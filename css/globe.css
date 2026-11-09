@@ -45,3 +45,5 @@
   .globe-controls { bottom: calc(var(--timebar-h) + 14px); }
 }
 .globe-fallback { position: absolute; inset: 0; display: grid; place-content: center; padding: 24px; text-align: center; color: var(--text-dim); max-width: 420px; margin: auto; }
+.globe-label.stn { color: #ffd9a0; }
+.globe-label:not(.iss):not(.stn):not(.sel) { color: var(--text-dim); font-size: 10px; }
