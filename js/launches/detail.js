@@ -5,11 +5,22 @@ import { getLaunch, loadLaunches, store } from './data.js';
 import { statusOf, parts, p2, fmtLocalFull, fmtUtc, hasClock, precisionNote, fmtDay, isDone } from './util.js';
 import { isArmed, toggleReminder, LEAD_MIN } from './reminders.js';
 import { flyToLatLon } from './globe.js';
+import { openCalMenu } from '../events/calmenu.js';
+import { SITE_URL } from '../util/ics.js';
 
 export function showPad(l) {
   if (state.get('view') !== 'globe') state.set('view', 'globe');
   setTimeout(() => flyToLatLon(l.lat, l.lon), 60);
 }
+/** Calendar event spec for a launch (all-day when only the date is known). */
+export function launchSpec(l) {
+  const clock = hasClock(l), place = [l.pad, l.location].filter(Boolean).join(', ');
+  const end = clock ? (l.windowEnd && l.windowEnd > l.net ? l.windowEnd : l.net + 3600e3) : l.net;
+  const desc = [`${l.rocketFull || l.rocket}${l.provider ? ' · ' + l.provider : ''}`, l.desc ? l.desc.slice(0, 280) : '', `Status: ${statusOf(l).label}${clock ? '' : ' (' + precisionNote(l) + ')'}`,
+    clock ? `Launch time: ${fmtLocalFull(l.net)} / ${fmtUtc(l.net)}` : `Date: ${fmtDay(l.net)}`, 'Launch times can slip: check the schedule or webcast before heading out.'].filter(Boolean).join('\n');
+  return { key: `launch-${l.id}`, title: `Launch: ${l.mission}`, start: l.net, end, allDay: !clock, description: desc, location: place || l.location || '', url: SITE_URL, link: { view: 'globe', sel: { kind: 'launch', id: l.id } } };
+}
+export function addLaunchToCalendar(l, anchor) { if (l?.net != null) openCalMenu(anchor, () => launchSpec(l)); }
 export function openWebcast(l) {
   if (!l.webcast) return;
   const w = window.open(l.webcast, '_blank', 'noopener,noreferrer');
@@ -52,6 +63,7 @@ export function registerLaunchDetail() {
     if (l.webcast) actions.push({ label: 'Watch webcast', onClick: () => openWebcast(l) });
     actions.push({ label: 'Show pad', onClick: () => showPad(l) });
     if (!isDone(l) && l.net != null) actions.push({ label: armed ? 'Reminder on · tap to remove' : 'Notify me', onClick: () => toggleReminder(l) });
+    if (!isDone(l) && l.net != null) actions.push({ label: 'Add to calendar', onClick: () => addLaunchToCalendar(l, [...document.querySelectorAll('#panel-detail .dp-actions .btn')].find(b => /calendar/i.test(b.textContent))) });
     return {
       title: l.mission, subtitle: `${l.rocket}${l.provider ? ' · ' + l.provider : ''}`, color: st.color, icon: 'rocket',
       stats, rows, note, actions,

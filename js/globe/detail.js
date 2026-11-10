@@ -95,6 +95,8 @@ export function registerSatDetail(api) {
       actions: [
         // GALLERY HOOK: telescopes get a "View its photos" action first (js/gallery/telescopes.js is the registry, keyed by NORAD id)
         ...(telescopeForNorad(sel.id) ? [{ label: '📷 View its photos', onClick: () => import('../gallery/index.js').then(m => m.openGallery(telescopeForNorad(sel.id).key)).catch(e => { console.warn('[gallery]', e); state.emit('toast', 'Couldn’t open the photo gallery'); }) }] : []),
+        // RIDE ALONG: camera on the satellite (js/globe/ride.js). Keyboard: R
+        ...(api.canRide?.(sel.id) ? [{ label: 'Ride along (R)', onClick: () => api.rideAlong(sel.id) }] : []),
         { label: following ? 'Stop following' : 'Follow', onClick: () => api.toggleFollow(sel.id) },
         { label: 'Show in sky', onClick: () => { state.set('view', 'sky'); state.emit('focus', sel); } },
       ],

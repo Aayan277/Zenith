@@ -1,0 +1,15 @@
+{
+  "name": "zenith-tests",
+  "private": true,
+  "description": "Test tooling only. The site itself is static and has no build step; nothing here is deployed.",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test -c tests/playwright.config.mjs",
+    "test:report": "playwright show-report tests/playwright-report",
+    "live-check": "node tests/live-check.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "http-server": "14.1.1"
+  }
+}

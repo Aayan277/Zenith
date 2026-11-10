@@ -14,6 +14,7 @@ import { SelectedPath, ObserverMarker, makeGraticule, makeRingMarker } from './o
 import { registerSatDetail } from './detail.js';
 import * as coords from './coords.js';
 import { attachGlobe, updateLayers, pickLayers } from './plugins.js';
+import { createRide } from './ride.js';
 
 const ISS_ID = 25544;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -76,7 +77,8 @@ export async function init() {
   controls.zoomSpeed = 0.7;
   // Created up front (frame/idleInterval are hoisted function declarations) so nothing can reach it before it exists.
   let interacting = false;   // declared before the loop so its interval callbacks can read it
-  const loop = createLoop(frame, { interval: idleInterval, minInterval: () => (softwareGL ? (interacting ? 66 : 400) : 0) });
+  let ride = null;           // ride along controller (created below)
+  const loop = createLoop(frame, { interval: idleInterval, minInterval: () => (softwareGL ? (ride?.active ? 90 : interacting ? 66 : 400) : 0) });
 
   renderer.userData = { ...(renderer.userData || {}), softwareGL };
   const earth = await createEarth(renderer);   // loads textures
@@ -113,7 +115,7 @@ export async function init() {
   let W = 1, H = 1, tier = 0;
   function resize() {
     W = Math.max(1, host.clientWidth); H = Math.max(1, host.clientHeight);
-    const dpr = TIERS[tier].dpr;
+    const dpr = ride?.active ? ride.dpr(TIERS[tier].dpr) : TIERS[tier].dpr;
     renderer.setPixelRatio(dpr);
     renderer.setSize(W, H, false);
     camera.aspect = W / H; camera.updateProjectionMatrix();
@@ -140,6 +142,14 @@ export async function init() {
             fromDist: camera.position.length(), toDist: dist, targetFn };
   }
   controls.addEventListener('start', () => { fly = null; });
+
+  // ---------- ride along (js/globe/ride.js) ----------
+  ride = createRide({
+    camera, controls, renderer, host, canvas, sats, earth, softwareGL,
+    cancelFly: () => { fly = null; },
+    wake: (ms) => loop.wake(ms),
+    onChange: (on) => { follow && (follow.last = null); resize(); if (cloudMesh) cloudMesh.visible = on || TIERS[tier].clouds; loop.wake(600); },
+  });
 
   function stepFly(nowT) {
     if (!fly) return;
@@ -187,6 +197,9 @@ export async function init() {
       if (i !== undefined) flyTo(satTarget(id), clamp(camera.position.length(), 1.5, 2.6), 1.4);
     },
   };
+  api.canRide = (id) => sats.idToIndex.has(id);
+  api.rideAlong = (id) => ride.toggle(id);
+  api.isRiding = () => ride.active;
   registerSatDetail(api);
 
   function satDir(id) {
@@ -230,7 +243,7 @@ export async function init() {
       const sat = getSat(sel.id);
       selLabel.textContent = sat ? sat.name : '';
       selMarker.material.uniforms.uColor.value.set(sat ? (CATEGORIES[sat.cat]?.color || '#7fe6ff') : '#7fe6ff').lerp(new THREE.Color('#ffffff'), 0.35);
-      if (state.get('view') === 'globe' && selIdx >= 0 && !fly) {
+      if (state.get('view') === 'globe' && selIdx >= 0 && !fly && !ride.active) {
         const id = sel.id;
         flyTo(satTarget(id), clamp(camera.position.length(), 1.7, 3.4), 1.3);
       }
@@ -242,7 +255,7 @@ export async function init() {
   state.on('selection', onSelection);
 
   state.on('focus', (sel) => {
-    if (!sel || state.get('view') !== 'globe') return;
+    if (!sel || state.get('view') !== 'globe' || ride.active) return;
     if (sel.kind === 'sat') {
       if (!sats.idToIndex.has(sel.id)) return;
       const id = sel.id;
@@ -298,7 +311,7 @@ export async function init() {
     if (!down || down.btn !== 0) { down = null; return; }
     const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y), dt = performance.now() - down.t;
     down = null;
-    if (moved > 5 || dt > 600) return;
+    if (moved > 5 || dt > 600 || ride.active) return;
     const r = rect();
     const claimed = pickLayers(e.clientX - r.left, e.clientY - r.top);
     if (claimed) { state.set('selection', claimed); return; }
@@ -312,7 +325,7 @@ export async function init() {
     if (tNow - lastPick < 30 && !down) return;     // pick scans every sat: at most ~30 Hz
     lastPick = tNow;
     pointer.moved = false;
-    if (down || !pointer.inside) { hoverIdx = -1; }
+    if (down || !pointer.inside || ride.active) { hoverIdx = -1; }
     else hoverIdx = sats.pick(pointer.x, pointer.y, camera, W, H, 10);
     if (hoverIdx >= 0) {
       const s = sats.list[hoverIdx], c = CATEGORIES[s.cat] || CATEGORIES.other;
@@ -410,11 +423,11 @@ export async function init() {
   controls.addEventListener('end', () => { interacting = false; loop.wake(900); });
 
   function busy() {
-    return interacting || camMoved || !!fly || sats.fading || Math.abs(getRate()) > 10;
+    return interacting || camMoved || !!fly || sats.fading || Math.abs(getRate()) > 10 || ride.active;
   }
   function idleInterval() {
     // Software GL: each frame costs ~100 ms of CPU, so idle redraws are rare (dots move only a few px in 4 s at 1x).
-    if (softwareGL) return interacting ? 66 : busy() ? 400 : (Math.abs(getRate()) > 1.5 ? 1000 : 4000);
+    if (softwareGL) return ride.active ? 90 : interacting ? 66 : busy() ? 400 : (Math.abs(getRate()) > 1.5 ? 1000 : 4000);
     if (busy()) return 0;
     if (Math.abs(getRate()) > 1.5 || selId != null || follow) return 33;
     return 50;
@@ -432,6 +445,7 @@ export async function init() {
     if (cloudMesh) cloudMesh.visible = TIERS[t].clouds;
   }, { pinned: PIN_QUALITY, name: 'globe' });
 
+  let lastHide = false, gridWas = false, labelsShown = true;
   let lastCamX = 0, lastCamY = 0, lastCamZ = 0, lastQ = 0, lastQy = 0, lastQz = 0, lastQw = 1;
   function frame(ts, dt) {
     const simMs = now();
@@ -450,9 +464,15 @@ export async function init() {
     const issIdx = have ? sats.idToIndex.get(ISS_ID) : undefined;
     const hasIss = issIdx !== undefined && sats.posOf(issIdx, issPos);
 
-    // camera: fly-to, then follow
-    stepFly(performance.now());
-    if (follow) {
+    // camera: ride along takes it over; otherwise fly-to, then follow
+    const riding = ride.active && ride.step(performance.now(), simMs, dt);
+    const hideOv = ride.active && ride.k > 0.35;
+    if (hideOv !== lastHide) {
+      lastHide = hideOv;
+      if (hideOv) { gridWas = graticule.visible; graticule.visible = false; } else { graticule.visible = gridWas; observer.group.visible = true; path.group.visible = selId != null; }
+    }
+    if (!riding) stepFly(performance.now());
+    if (!riding && follow) {
       const p = follow.id === selId && hasSel ? satPos : null;
       if (p) {
         tmpA.copy(p).normalize();
@@ -462,8 +482,10 @@ export async function init() {
       }
     }
     const dist = camera.position.length();
-    controls.rotateSpeed = 0.18 + 0.62 * clamp((dist - 1.12) / 2.6, 0, 1);
-    controls.update();
+    if (!riding) {
+      controls.rotateSpeed = 0.18 + 0.62 * clamp((dist - 1.12) / 2.6, 0, 1);
+      controls.update();
+    }
     const cp = camera.position, cq = camera.quaternion;
     const moved = Math.abs(cp.x - lastCamX) + Math.abs(cp.y - lastCamY) + Math.abs(cp.z - lastCamZ) > 2e-5 * dist
       || Math.abs(cq.x - lastQ) + Math.abs(cq.y - lastQy) + Math.abs(cq.z - lastQz) + Math.abs(cq.w - lastQw) > 2e-5;
@@ -474,18 +496,18 @@ export async function init() {
 
     // markers
     const tSec = ts / 1000;
-    selMarker.visible = !!hasSel;
+    selMarker.visible = !!hasSel && !hideOv;
     if (hasSel) {
       const a = selMarker.geometry.attributes.position; a.array[0] = satPos.x; a.array[1] = satPos.y; a.array[2] = satPos.z;
       a.needsUpdate = true;
       selMarker.material.uniforms.uTime.value = reducedMotion() ? 0.3 : tSec;
     }
-    issMarker.visible = !!hasIss && !(hasSel && selId === ISS_ID);
+    issMarker.visible = !!hasIss && !(hasSel && selId === ISS_ID) && !hideOv;
     if (hasIss) {
       const a = issMarker.geometry.attributes.position; a.array[0] = issPos.x; a.array[1] = issPos.y; a.array[2] = issPos.z;
       a.needsUpdate = true;
     }
-    if (hoverIdx >= 0 && sats.posOf(hoverIdx, hovPos)) {
+    if (hoverIdx >= 0 && !hideOv && sats.posOf(hoverIdx, hovPos)) {
       hoverMarker.visible = true;
       const a = hoverMarker.geometry.attributes.position; a.array[0] = hovPos.x; a.array[1] = hovPos.y; a.array[2] = hovPos.z;
       a.needsUpdate = true;
@@ -493,6 +515,7 @@ export async function init() {
 
     path.update(simMs, hasSel ? satPos : null, camera, renderer.getPixelRatio());
     observer.update(reducedMotion() ? 0 : tSec, dist);
+    if (hideOv) { path.group.visible = false; observer.group.visible = false; }
 
     // hover (after camera moved so the pick matches what is on screen)
     camera.updateMatrixWorld();
@@ -502,13 +525,16 @@ export async function init() {
 
     // labels: DOM writes are throttled to ~5 Hz while nothing moves
     const tNow = performance.now();
-    if (camMoved || fly || interacting || tNow - lastLabels > 200) {
+    if (hideOv) {
+      if (labelsShown) { labelsShown = false; for (let k = 0; k < labelPool.length; k++) { labelPool[k].style.opacity = 0; labelOp[k] = 0; } selLabel.style.opacity = 0; tip.style.opacity = 0; hasSelBox = null; }
+    } else if (camMoved || fly || interacting || tNow - lastLabels > 200 || !labelsShown) {
+      labelsShown = true;
       lastLabels = tNow;
       placeNotableLabels(dist);
       if (hasSel) { place(selLabel, satPos, 18, -26); hasSelBox = selLabel.style.opacity === '1' ? { x: scr.x + 12, y: scr.y - 30, w: selLabel.textContent.length * 8 + 26, h: 18 } : null; }
       else { selLabel.style.opacity = 0; hasSelBox = null; }
     }
-    placeTip();
+    if (!hideOv) placeTip();
     quality.sample(ts, busy());
   }
 
@@ -537,7 +563,7 @@ export async function init() {
   maybeIntro();
 
   // handy for tests / debugging
-  window.__globe = { THREE, scene, camera, controls, sats, path, renderer, flyTo, api, earth, loop, get fly() { return fly; }, get tier() { return tier; }, quality, obsDir };
+  window.__globe = { ride, THREE, scene, camera, controls, sats, path, renderer, flyTo, api, earth, loop, get fly() { return fly; }, get tier() { return tier; }, quality, obsDir };
 }
 
 function el(tag, cls, parent) {

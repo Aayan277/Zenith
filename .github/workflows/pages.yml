@@ -4,6 +4,11 @@ name: Deploy to GitHub Pages
 # site is also rebuilt every 6 hours with fresh data fetched at build time.
 # Fresh data is written only into the deployed site, not committed, which keeps
 # the git history small. The committed data/sats.json is a fallback snapshot.
+#
+# `test` (Playwright smoke suite, tests/) gates `deploy` on pushes and manual runs. The 6-hourly scheduled
+# refresh skips the tests on purpose: it redeploys the same commit that already passed on push, with only
+# the data files replaced (and the data fetchers are continue-on-error), so a ~5 min browser run every 6 h
+# would add cost without catching anything new. Run it manually (workflow_dispatch) when in doubt.
 on:
   push:
     branches: [main]
@@ -21,7 +26,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  test:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+      - name: Smoke tests
+        # Tracing/screenshots/video are off in tests/playwright.config.mjs. External APIs are mocked from tests/fixtures.
+        run: npm test
+      - name: Upload Playwright HTML report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: tests/playwright-report
+          retention-days: 7
+          if-no-files-found: ignore
+
   deploy:
+    needs: test
+    # `test` is skipped on the schedule: still deploy then, but never when it failed or the run was cancelled.
+    if: ${{ !cancelled() && (needs.test.result == 'success' || needs.test.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
@@ -37,7 +70,7 @@ jobs:
           mkdir -p _site/data/sky
           cp -r index.html sw.js css js assets _site/
           cp data/sats.json data/sats-core.json data/launches.json data/spacecraft.json _site/data/
-          cp data/sky/sky.json data/sky/constellations.json _site/data/sky/
+          cp data/sky/sky.json data/sky/constellations.json data/sky/dso.json _site/data/sky/
           touch _site/.nojekyll
       - name: Fetch fresh satellite data
         # If CelesTrak (and the fallback) are down, keep the committed snapshot.

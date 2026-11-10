@@ -53,3 +53,6 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .sys-chip { display: none; }
   .sys-jump button { padding: 6px 7px; }
 }
+
+/* The time bar now owns time-lapse speeds in this view (1 day/s, 1 wk/s, 1 mo/s). */
+.sys-chip[data-act="lapse"] { display: none; }

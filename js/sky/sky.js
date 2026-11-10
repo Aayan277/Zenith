@@ -8,6 +8,8 @@ import { loadSkyData, makeStarSprites, makeGlowSprite, bvBucket, BV_BUCKETS, MW_
 import { initSats, setActive as setSatsActive, setObserver, getFrame as getSatFrame, satPosition, skyTrack, tickSeq, CAT_KEYS } from './sats.js';
 import { registerProviders, fmtTime } from './details.js';
 import { initAurora, updateAurora, prepareAuroraLayer, drawAurora, auroraAt, auroraState, auroraHeadline, auroraDetail } from './aurora.js';
+import { loadDso, drawDso, queueDsoLabels, dso, hits as dsoHits, registerDsoProvider, getDso, symbolRadius, fmtSize, TYPE_STYLE, magLimit } from './dso.js';
+import { activeRadiants, activeKey as radiantKey, drawRadiants, drawMeteors, hits as radHits, registerRadiantProvider, radiantLabel, radiantEquatorial, setRadiantChangeHandler, RADIANT_RGB } from './radiants.js';
 import { fmtLocal, tzLabel } from '../util/time.js';
 import { createLoop, onVisibility, isHidden, reducedMotion, idle, QualityGovernor } from '../util/governor.js';
 
@@ -35,7 +37,7 @@ const invalidate = () => { skyKey = ''; backKey = ''; frontKey = ''; };
 let F = null;                       // frame matrices
 let bodies = [], bodiesOrder = [], bodiesTime = -1e15, bodiesLoc = '', filtVer = 0;
 let sunAlt = -30, lim = 6.5;
-const opts = { lines: true, labels: true, mw: true, grid: false, sats: true, aurora: true };
+const opts = { lines: true, labels: true, mw: true, grid: false, sats: true, aurora: true, dso: true };
 const cam = { alt: 90, az: 180, zoom: 1 };
 let zoomT = 1, zoomAnchor = null, tween = null;
 let velPan = { x: 0, y: 0 }, velAz = 0, dragging = false;
@@ -61,6 +63,9 @@ export async function init() {
   loadPrefs();
   buildDom();
   setObserver(state.get('location'));
+  registerDsoProvider({ frameAt: ms => (F && Math.abs(F.time - ms) < 1500 ? F : makeFrame(ms, state.get('location'))) });
+  registerRadiantProvider({ frameAt: ms => (F && Math.abs(F.time - ms) < 1500 ? F : makeFrame(ms, state.get('location'))) });
+  setRadiantChangeHandler(() => { invalidate(); loop && loop.wake(300); });
   registerProviders({ aurora: (ms) => auroraDetail(state.get('location'), ms), data: () => data, frameAt: ms => (F && Math.abs(F.time - ms) < 1500 ? F : makeFrame(ms, state.get('location'))) });
   loop = createLoop(loopFrame, { interval: idleInterval });
   qGov = new QualityGovernor(QTIERS.length, (t) => { qTier = t; resize(); }, { pinned: PIN_QUALITY, name: 'sky' });
@@ -71,7 +76,12 @@ export async function init() {
   // Star data / Milky Way / sprites are parsed off the critical path: right away when the sky is the first view,
   // otherwise when the browser is idle.
   initAurora(() => { loop && loop.wake(300); });
-  const boot = async () => { await loadData(); await initSats(); setActive(state.get('view') === 'sky', true); };
+  const boot = async () => {
+    await loadData(); await initSats(); setActive(state.get('view') === 'sky', true);
+    // a deep-sky / radiant selection that arrived before the sky was ready (search result, shared link): fly to it
+    const s0 = state.get('selection');
+    if (s0 && (s0.kind === 'dso' || s0.kind === 'radiant') && state.get('view') === 'sky') setTimeout(() => focusOn(s0), 400);
+  };
   if (state.get('view') === 'sky') await boot();
   else idle(() => { boot().catch(e => console.error('[sky] boot', e)); }, 2500);
 }
@@ -84,6 +94,8 @@ async function loadData() {
   moonGlow = makeGlowSprite('200,215,255', 128);
   for (const [k, rgb] of Object.entries({ Mercury: '207,198,182', Venus: '255,246,220', Mars: '255,143,102', Jupiter: '255,227,189', Saturn: '242,217,154', Uranus: '169,234,240', Neptune: '134,165,255', sat: '255,255,255' }))
     glowSprites[k] = makeGlowSprite(rgb, 64);
+  loadDso().then(() => { invalidate(); loop && loop.wake(300); });
+  activeRadiants(clock.now());
   hits = { n: 0, x: new Float32Array(data.stars.n), y: new Float32Array(data.stars.n), i: new Int32Array(data.stars.n) };
   buildTreeline();
 }
@@ -101,6 +113,7 @@ function buildDom() {
       <button class="sky-btn" data-opt="lines" title="Constellation lines">Lines</button>
       <button class="sky-btn" data-opt="labels" title="Constellation and star names">Names</button>
       <button class="sky-btn" data-opt="mw" title="Milky Way">Milky Way</button>
+      <button class="sky-btn" data-opt="dso" title="Galaxies, nebulae and star clusters (Messier and NGC objects)">Deep sky</button>
       <button class="sky-btn" data-opt="grid" title="Altitude/azimuth grid, ecliptic and celestial equator">Grid</button>
       <button class="sky-btn" data-opt="sats" title="Satellites">Satellites</button>
       <button class="sky-btn" data-opt="aurora" title="Aurora (NOAA OVATION nowcast / Kp forecast)">Aurora</button>
@@ -328,18 +341,19 @@ function frame(ts, dt) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
   const night = clamp((lim - 1) / 3.5, 0, 1);   // 0 day .. 1 night, for overlays
+  const radKey = radiantKey(simNow);
   const rate = clock.getRate();
   const hiCon = hoverCon || (selection?.kind === 'constellation' ? selection.id : '');
 
   // ---- static layer: re-rendered when the camera moves or the star field has drifted by ~0.4 px
   const driftPxPerS = 1.46e-4 * S * Math.max(1, Math.abs(rate));
   const tb = clamp(400 / driftPxPerS, 250, 4000);
-  const bKey = `${cam.alt.toFixed(3)}|${cam.az.toFixed(3)}|${cam.zoom.toFixed(4)}|${W}|${H}|${dpr}|${uiRect.top | 0}|${uiRect.bottom | 0}|${opts.mw}|${opts.grid}|${opts.lines}|${hiCon}|${Math.floor(simNow / tb)}|${camBusy ? 1 : 0}|${Math.round(sunAlt * 4)}`;
+  const bKey = `${cam.alt.toFixed(3)}|${cam.az.toFixed(3)}|${cam.zoom.toFixed(4)}|${W}|${H}|${dpr}|${uiRect.top | 0}|${uiRect.bottom | 0}|${opts.mw}|${opts.grid}|${opts.lines}|${hiCon}|${Math.floor(simNow / tb)}|${camBusy ? 1 : 0}|${Math.round(sunAlt * 4)}|${opts.dso ? (dso.ready ? 2 : 1) : 0}|${selection?.kind === 'dso' || selection?.kind === 'radiant' ? selection.kind + selection.id : ''}|${radKey}`;
   // ---- front layer (ground, labels, compass): same camera triggers + selection/hover/filters + a ~1 Hz refresh
   const fb = Math.abs(rate) <= 1.5 ? 1000 : 1;
   const sel = selection ? selection.kind + selection.id : '';
   const hv = hover ? hover.kind + hover.id : '';
-  const fKey = `${cam.alt.toFixed(3)}|${cam.az.toFixed(3)}|${cam.zoom.toFixed(4)}|${W}|${H}|${dpr}|${uiRect.top | 0}|${uiRect.bottom | 0}|${opts.lines}|${opts.labels}|${opts.sats}|${sel}|${hv}|${hiCon}|${filtVer}|${bodiesTime}|${passKey}|${Math.round(sunAlt * 8)}|${Math.floor(simNow / fb)}|${tickSeq()}`;
+  const fKey = `${cam.alt.toFixed(3)}|${cam.az.toFixed(3)}|${cam.zoom.toFixed(4)}|${W}|${H}|${dpr}|${uiRect.top | 0}|${uiRect.bottom | 0}|${opts.lines}|${opts.labels}|${opts.sats}|${sel}|${hv}|${hiCon}|${filtVer}|${opts.dso ? 1 : 0}|${radKey}|${bodiesTime}|${passKey}|${Math.round(sunAlt * 8)}|${Math.floor(simNow / fb)}|${tickSeq()}`;
   const needBack = bKey !== backKey, needFront = fKey !== frontKey;
   // While the camera moves both layers change every frame and caching would only add two full-screen blits:
   // draw straight onto the canvas (original order) and let the caches rebuild once the camera settles.
@@ -364,11 +378,14 @@ function frame(ts, dt) {
     if (prepareAuroraLayer(auroraCam, camBusy ? 8 : (compact() ? 4 : 3), camBusy)) drawAurora(ctx, W, H, ts, reducedMotion());
   }
   drawTwinkle(ts);
+  drawMeteors({ ctx, C, M, S, cx, cy, W, H, ts, simNow, sunAlt, reduced: reducedMotion() });
   drawBodies(ts, simNow);
   if (opts.sats) drawSats(ts, simNow); else satPick.n = 0;
   drawPassArc(simNow);
   if (needFront) {
     queueSelectionLabel(simNow);
+    if (opts.dso) queueDsoLabels({ zoom: cam.zoom, selId: selection?.kind === 'dso' ? selection.id : '', labels: opts.labels, compact: compact(), queue: dsoQueue });
+    queueRadiantLabels(simNow);
     if (opts.lines || opts.labels) queueConLabels(night);
     queueStarLabels(night);
     if (direct) drawFrontLayers(night);
@@ -390,7 +407,23 @@ function drawBackLayers(simNow, ts, night) {
   drawSkyBackground(simNow);
   if (opts.grid) drawGrid(ts);
   if (opts.lines) drawConLines(night);
+  dsoHits0();
+  if (opts.dso) drawDso({ ctx, C, M: F.M, S, cx, cy, W, H, zoom: cam.zoom, lim, selId: selection?.kind === 'dso' ? selection.id : '' });
   drawStarsStatic(night);
+  drawRadiants({ ctx, C, M: F.M, S, cx, cy, W, H, zoom: cam.zoom, night: clamp((lim - 1) / 3.5, 0, 1), simNow, selId: selection?.kind === 'radiant' ? selection.id : '' });
+}
+const dsoHits0 = () => { dsoHits.n = 0; };
+const dsoQueue = (k, t, x, y, r, p, fs, fill) => queueLabel(k, t, x, y, r, p, fs, fill, 'side', 0);
+function queueRadiantLabels(simNow) {
+  if (!opts.labels) return;
+  const fs = compact() ? 10 : 11;
+  for (let i = 0; i < radHits.n; i++) {
+    const s = radHits.o[i], a = radHits.a[i];
+    const sel = selection?.kind === 'radiant' && selection.id === s.id;
+    if (a < 0.2 && !sel) continue;
+    if (!sel && s.zhr < 10 && cam.zoom < 2) continue;      // weak showers: label only when zoomed in or selected
+    queueLabel('r:' + s.id, radiantLabel(s), radHits.x[i], radHits.y[i], 17, sel ? 0 : 2.6, fs, `rgba(${RADIANT_RGB},${sel ? 0.98 : Math.min(0.9, 0.55 + a * 0.4).toFixed(3)})`, 'side', 0);
+  }
 }
 function drawFrontLayers(night) {
   skyColors = skyParams(sunAlt);
@@ -1014,10 +1047,12 @@ function objectEnu(kind, id, simNow) {
   if (kind === 'star') { const i = data.stars.byHip.get(id); if (i === undefined) return null; return applyM(F.M, data.stars.vec[i * 3], data.stars.vec[i * 3 + 1], data.stars.vec[i * 3 + 2]); }
   if (kind === 'constellation') { const c = data.consById.get(id); return c ? applyM(F.M, c.label[0], c.label[1], c.label[2]) : null; }
   if (kind === 'sat') { const p = satPosition(id, simNow); return p ? [p.e, p.n, p.u] : null; }
+  if (kind === 'dso') { const o = getDso(id); return o ? applyM(F.M, o.x, o.y, o.z) : null; }
+  if (kind === 'radiant') { const s = radiantEquatorial(id, simNow); return s ? applyM(F.M, s.x, s.y, s.z) : null; }
   return null;
 }
 function queueSelectionLabel(simNow) {
-  if (!selection || selection.kind === 'body' || selection.kind === 'sat' || selection.kind === 'constellation') return;
+  if (!selection || selection.kind === 'body' || selection.kind === 'sat' || selection.kind === 'constellation' || selection.kind === 'dso' || selection.kind === 'radiant') return;
   const v = objectEnu(selection.kind, selection.id, simNow);
   if (!v || v[2] < 0 || !proj(v[0], v[1], v[2]) || !onScreen(PX, PY, 0)) return;
   const nm = data.names.get(selection.id);
@@ -1029,7 +1064,7 @@ function drawSelection(ts, simNow) {
   if (!v || v[2] < -0.02 || !proj(v[0], v[1], v[2]) || !onScreen(PX, PY, 40)) return;
   const t = ts / 1000;
   const still = reducedMotion();
-  const r = (selection.kind === 'constellation' ? 0 : 13) + (still ? 0 : 2 * Math.sin(t * 3));
+  const r = (selection.kind === 'constellation' ? 0 : selection.kind === 'dso' ? Math.max(13, Math.min(symbolRadius(selection.id), 200) + 7) : selection.kind === 'radiant' ? 20 : 13) + (still ? 0 : 2 * Math.sin(t * 3));
   if (selection.kind === 'constellation') return;
   ctx.save(); ctx.translate(PX, PY); ctx.rotate(still ? 0 : t * 0.8);
   ctx.strokeStyle = 'rgba(92,225,255,0.95)'; ctx.lineWidth = 1.4; ctx.setLineDash([5, 5]);
@@ -1054,6 +1089,15 @@ function pick(px, py) {
       const id = fr.ids[fr.idx[j]];
       consider('sat', id, x, y, 9, 4, lookupSat(id)?.name || String(id), { range: fr.range[j], el: Math.asin(fr.dz[j]) * R2D });
     }
+  }
+  if (opts.dso) for (let q = 0; q < dsoHits.n; q++) {
+    const o = dsoHits.o[q], rad = Math.max(10, Math.min(dsoHits.r[q], 140) + 2);
+    if (Math.abs(dsoHits.x[q] - px) > rad || Math.abs(dsoHits.y[q] - py) > rad) continue;
+    consider('dso', o.id, dsoHits.x[q], dsoHits.y[q], rad, 2 + Math.min(6, rad * 0.04) - o.mag * 0.1, o.name ? `${o.name} · ${o.id}` : o.id, { dso: o });
+  }
+  for (let q = 0; q < radHits.n; q++) {
+    const s = radHits.o[q]; if (Math.abs(radHits.x[q] - px) > 24 || Math.abs(radHits.y[q] - py) > 24) continue;
+    consider('radiant', s.id, radHits.x[q], radHits.y[q], 22, 8, `${s.name} radiant`, { shower: s });
   }
   for (let h = 0; h < hits.n; h++) {
     const x = hits.x[h], y = hits.y[h]; if (Math.abs(x - px) > 11 || Math.abs(y - py) > 11) continue;
@@ -1159,6 +1203,8 @@ function onHover(x, y, e) {
   let sub = '';
   if (hit.aurora) sub = hit.aurora.source === 'ovation' ? `${hit.aurora.pct}% chance (NOAA OVATION)` : `~${hit.aurora.pct}% chance (estimated from Kp forecast)`;
   else if (hit.kind === 'body' && hit.body) sub = `alt ${hit.body.alt.toFixed(0)}° · ${compass(hit.body.az)}` + (hit.id !== 'Sun' && hit.id !== 'Moon' ? ` · mag ${hit.body.mag.toFixed(1)}` : '');
+  else if (hit.kind === 'dso') { const o = hit.dso, [sv, su] = fmtSize(o.size); sub = `${TYPE_STYLE[o.type]?.short || o.type} · mag ${o.mag.toFixed(1)} · ${sv}${su}`; }
+  else if (hit.kind === 'radiant') sub = `meteor shower · ZHR ${Math.round(hit.shower.zhr)}`;
   else if (hit.kind === 'star') sub = `magnitude ${hit.mag.toFixed(1)}`;
   else if (hit.kind === 'sat') sub = `alt ${hit.el.toFixed(0)}° · ${Math.round(hit.range).toLocaleString()} km`;
   else sub = 'constellation';
@@ -1173,13 +1219,16 @@ function hideTip() { if (tip) tip.hidden = true; }
 // ---- focus --------------------------------------------------------------------------------
 function focusOn(req) {
   if (!req || !data) return;
+  if (req.kind === 'dso' && !dso.ready) { loadDso().then(() => dso.ready && focusOn(req)); return; }
+  if (req.kind === 'radiant' && !radiantEquatorial(req.id, clock.now())) { import('./radiants.js').then(m => m.loadShowers()).then(() => radiantEquatorial(req.id, clock.now()) && focusOn(req)); return; }
   const simNow = clock.now();
   if (!F) F = makeFrame(simNow, state.get('location'));
   if (!bodies.length) { bodies = computeBodies(simNow, state.get('location'), F, true); bodiesTime = simNow; bodiesLoc = `${state.get('location').lat},${state.get('location').lon}`; }
   let v = objectEnu(req.kind, req.id, simNow);
   if (!v) return;
   const aa = enuToAltAz(v[0], v[1], v[2]);
-  const name = req.kind === 'body' ? req.id : req.kind === 'star' ? (data.names.get(req.id)?.name || `HIP ${req.id}`) : req.kind === 'constellation' ? (data.consById.get(req.id)?.name || req.id) : 'Satellite';
+  const dsoObj = req.kind === 'dso' ? getDso(req.id) : null, rad = req.kind === 'radiant' ? radiantEquatorial(req.id, simNow) : null;
+  const name = dsoObj ? (dsoObj.name || dsoObj.id) : rad ? `${rad.name} radiant` : req.kind === 'body' ? req.id : req.kind === 'star' ? (data.names.get(req.id)?.name || `HIP ${req.id}`) : req.kind === 'constellation' ? (data.consById.get(req.id)?.name || req.id) : 'Satellite';
   if (aa.alt < -0.5) {
     let msg = `${name} is below your horizon`;
     try {
@@ -1187,6 +1236,7 @@ function focusOn(req) {
       let key = null, bn = null;
       if (req.kind === 'body') { key = 'body:' + req.id; bn = req.id; }
       else if (req.kind === 'star') { const i = data.stars.byHip.get(req.id); defineStar(data.stars.ra[i], data.stars.dec[i]); key = 'star:' + req.id; bn = 'Star1'; }
+      else if (dsoObj || rad) { const q = dsoObj || rad; defineStar(q.ra, q.dec); key = 'focus:' + req.kind + req.id; bn = 'Star1'; }
       if (key) { const r = riseTransitSet(key, bn, loc, simNow); if (r.rise) msg += ` — rises at ${fmtTime(r.rise, simNow)}`; }
     } catch {}
     state.emit('toast', msg);
@@ -1195,7 +1245,11 @@ function focusOn(req) {
     defaultCam = false;
     return;
   }
-  const zoom = req.kind === 'constellation' ? 2.6 : req.kind === 'body' && (req.id === 'Moon' || req.id === 'Sun') ? 8 : req.kind === 'sat' ? 4 : 5;
+  let dsoZoom = 5;
+  if (dsoObj) { // frame the object at about 70 px radius
+    const S0 = S / cam.zoom; dsoZoom = clamp(70 / Math.max(1e-6, dsoObj.size / 60 * D2R / 2 * S0), 3, 24);
+  }
+  const zoom = dsoObj ? dsoZoom : rad ? 3 : req.kind === 'constellation' ? 2.6 : req.kind === 'body' && (req.id === 'Moon' || req.id === 'Sun') ? 8 : req.kind === 'sat' ? 4 : 5;
   startTween({ alt: clamp(aa.alt, 5, 90), az: shortestAz(cam.az, aa.az), zoom }, 1300);
   defaultCam = false;
 }

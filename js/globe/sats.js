@@ -20,6 +20,8 @@ const VERT = /* glsl */`
   uniform float uU;
   uniform float uPx;
   uniform float uScale;
+  uniform float uRide;
+  uniform vec3 uHide;
   uniform vec3 uCol[${NCAT}];
   uniform float uSize[${NCAT}];
   uniform float uVis[${NCAT}];
@@ -45,12 +47,19 @@ const VERT = /* glsl */`
     vec4 mv = modelViewMatrix * vec4(p, 1.0);
     float dist = length(mv.xyz);
     float k = clamp(3.0 / dist, 0.75, 3.2);
+    float fadeNear = 1.0;
+    if (uRide > 0.001) {
+      // ride along: the swarm is seen from inside it, so keep the dots star-sized and fade out the very near ones
+      k = mix(k, clamp(0.16 / dist, 0.30, 0.9), uRide);
+      fadeNear = mix(1.0, smoothstep(0.0015, 0.009, dist) * 0.7, uRide);
+      if (distance(p, uHide) < 0.0009) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; vCol = vec3(0.0); vLit = 0.0; return; }
+    }
     gl_PointSize = uSize[ci] * aSz * (1.0 + 0.6 * aHi) * 4.6 * uPx * k * uScale * (aLit > 0.5 ? 1.0 : 0.8);
     gl_Position = projectionMatrix * mv;
     vCol = uCol[ci];
     vLit = aLit;
     vHi = aHi;
-    vFade = mix(1.0, uNew, aNew);
+    vFade = mix(1.0, uNew, aNew) * fadeNear;
   }`;
 
 const FRAG = /* glsl */`
@@ -99,7 +108,7 @@ export class SatLayer {
     const col = CAT_KEYS.map(k => new THREE.Color(CATEGORIES[k].color));
     this.material = new THREE.ShaderMaterial({
       uniforms: {
-        uU: { value: 1 }, uPx: { value: 1 }, uScale: { value: 1 }, uNew: { value: 1 },
+        uU: { value: 1 }, uPx: { value: 1 }, uScale: { value: 1 }, uNew: { value: 1 }, uRide: { value: 0 }, uHide: { value: new THREE.Vector3(1e6, 0, 0) },
         uCol: { value: col.map(c => new THREE.Vector3(c.r, c.g, c.b)) },
         uSize: { value: CAT_KEYS.map(k => CATEGORIES[k].size) },
         uVis: { value: new Array(NCAT).fill(1) },

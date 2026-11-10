@@ -87,6 +87,10 @@ must not break the others. Do NOT import from `main.js` (circular). To show a to
 | `craft` | spacecraft key e.g. `'jwst'` | system |
 | `world` | `'Earth'`, `'Pluto'` (heliocentric info) | system |
 | `launch` | Launch Library id | launches |
+| `dso` | Messier/NGC id e.g. `'M31'` | sky |
+| `radiant` | meteor shower id e.g. `'Geminids'` | sky |
+| `event` | sky event id | events |
+| `event` | sky-event id, e.g. `meteor-geminids-2026`, `ecl-solar-2027-08-02` | events (`js/events/detail.js`) |
 
 ## Globe plug-ins
 
@@ -152,3 +156,38 @@ Headless check: Playwright's Chromium is preinstalled (`require('playwright')`).
   offline on first visit, add it to `PRECACHE` in `sw.js` (anything else is cached on first use).
 - **Deploy**: the Pages workflow minifies every `js/**/*.js`, `sw.js` and `css/*.css` in `_site` with esbuild (per file, no bundling), so
   keep modules plain ESM (no build-time imports).
+
+
+## Sky events (`js/events/`) and calendar export
+
+Left-panel tab **Events** (`js/events/panel.js`, `css/events.css`) plus the **Up tonight** card at the top of the Tonight tab
+(`js/tonight/summary.js`). Everything is computed lazily with astronomy-engine, in `requestIdleCallback` slices (about 10 ms each),
+and cached per location (2 decimals) + UTC day. The tab computes the next 12 months when it is first opened (~1 s of idle work).
+
+```js
+import { getShowers, activeShowers, upcomingEvents, ensureEvents, onEvents, getEvent, evaluateShower } from './events/index.js';
+getShowers(2026)        // [{ id, name, peak (ms UTC), start, end, zhr, ra (deg), dec (deg), speed (km/s), parent, best, note, hw }]  sync, cached
+activeShowers(ms)       // showers whose active range contains ms, + { daysFromPeak }; sync
+await ensureEvents()    // compute / return cached events for state.location; concurrent calls share one run
+upcomingEvents(fromMs, days = 365)  // SYNC: sorted events already computed for the current location ([] before ensureEvents resolves)
+onEvents(fn)            // fn({ status: 'loading'|'ready', progress: 0..1, events }); returns unsubscribe
+evaluateShower(shower, loc?, { from, to }?)  // { rate (est. meteors/hour here), rating: Excellent|Good|Fair|Poor, moonIllum, radiantAlt, bestStart, bestEnd, bestMs }
+```
+
+Event shape: `{ id, type: 'meteor'|'eclipse'|'moon'|'planet', sub, t (ms), title, line, badge, importance (0-10), vis: 'yes'|'part'|'no'|null,
+visNote, viewMs (when it is best seen: the clock jumps here), focus: { kind, id }, rows, desc, ics?: { start, end }, shower? }`.
+Showers use J2000 solar longitudes (IMO) converted to the equinox of date; rating = ZHR x peak profile x sin(radiant altitude) x Moon penalty over the
+best 3 dark hours. Eclipses use `SearchLunarEclipse` / `SearchGlobalSolarEclipse` / `SearchLocalSolarEclipse`; planet events are oppositions,
+greatest elongations, planet-planet and Moon-planet conjunctions within 2 degrees (daily scan, then refined), equinoxes and solstices.
+
+Clicking an event (`goToEvent` in `js/events/ui.js`): `selection = { kind: 'event', id }`, `clock.setTime(viewMs)`, view -> `sky`, then
+`state.emit('focus', ev.focus)` (sent twice, at 350 ms and 1600 ms, because the Sky view may still be initialising). `focus` is
+`{ kind: 'body', id: 'Jupiter' }` for planets, Moon and Sun, and **`{ kind: 'radiant', id: 'Perseids' }`** for meteor showers (`id` = `showers.js` id; the Sky view
+looks the radiant up with `getShowers(year)` / `activeShowers(ms)`).
+
+**`js/util/ics.js`** (dependency-free): `buildIcs(spec | spec[])` -> RFC 5545 text (CRLF, lines folded at 75 octets, escaped, stable `UID`, `VALARM` 15 min before),
+`downloadIcs(spec)` -> saves `zenith-<slug>.ics` through a Blob, `googleUrl(spec)` -> calendar.google.com template link, `icsEscape`, `foldLine`, `slug`.
+`spec = { key?, title, start (ms), end?, allDay?, description?, location?, url?, link? }` (`link = { view, t, sel }` is turned into a share URL through
+`js/ui/url.js linkPairs()` when the menu opens). **`js/events/calmenu.js`**: `calBtn(attrs)` HTML + `openCalMenu(anchorEl, spec | () => spec)` popover
+("Apple / Outlook (.ics)", "Google Calendar", "Reminder 15 min before"; the reminder lives in the calendar app, so it fires with Zenith closed).
+Used by the ISS card and pass list, the Launches hero card and detail, and Events (rows, hero, detail).

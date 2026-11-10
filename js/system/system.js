@@ -704,7 +704,7 @@ export async function init() {
   }
   function speedHint() {
     const r = getRate();
-    if (Math.abs(r) < 1.5) return 'Real time: planets barely move. Jump ahead or use Time-lapse.';
+    if (Math.abs(r) < 1.5) return 'Real time: planets barely move. Jump ahead or pick a speed in the time bar.';
     const per = Math.abs(r);
     const unit = per >= 2.4e6 ? `${(per / 2.6298e6).toFixed(per % 2.6298e6 < 1 ? 0 : 1)} month` : per >= 86400 ? `${(per / 86400).toFixed(per % 86400 < 1 ? 0 : 1)} day` : per >= 3600 ? `${(per / 3600).toFixed(per % 3600 < 1 ? 0 : 1)} hour` : `${Math.round(per / 60)} min`;
     return `${r < 0 ? 'Reversed ' : ''}${per.toLocaleString('en-US')}×: 1 second = ${unit}${/^1 /.test(unit) ? '' : 's'}`;

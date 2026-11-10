@@ -1,7 +1,8 @@
 // Detail panel for state.selection. Renders whatever the registered provider returns, twice a second.
 import * as state from '../state.js';
 import { now } from '../clock.js';
-import { getSat } from '../data/catalog.js';
+import { getSat, isFullCatalog } from '../data/catalog.js';
+import { SHARE_ICON } from './share.js';
 
 const svg = (inner, extra = '') => `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" ${extra}>${inner}</svg>`;
 const ICONS = {
@@ -16,7 +17,7 @@ const ICONS = {
 const ICON_CLOSE = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-let panel, card, sel = null, sig = '', timer = 0, hideTimer = 0, latestActions = [];
+let panel, card, selSince = 0, sel = null, sig = '', timer = 0, hideTimer = 0, latestActions = [];
 const tweens = new WeakMap();
 
 function defaultIcon(sel) {
@@ -57,7 +58,10 @@ function header(d, loading) {
     <header class="dp-head">
       <span class="dp-icon">${ICONS[d.icon] || ICONS.sat}</span>
       <div class="dp-titles"><h2 class="dp-title">${esc(d.title)}</h2>${d.subtitle ? `<p class="dp-sub">${esc(d.subtitle)}</p>` : ''}</div>
-      <button class="dp-close" aria-label="Close details" title="Close (Esc)">${ICON_CLOSE}</button>
+      <div class="dp-btns">
+        <button class="dp-share" aria-label="Share link to this object" aria-haspopup="dialog" aria-expanded="false" title="Share a link">${SHARE_ICON}</button>
+        <button class="dp-close" aria-label="Close details" title="Close (Esc)">${ICON_CLOSE}</button>
+      </div>
     </header>`;
 }
 
@@ -74,11 +78,41 @@ function renderLoading() {
     <div class="dp-rows">${'<div class="dp-row sk"><span class="sk-bar w30"></span><span class="sk-bar w40"></span></div>'.repeat(3)}</div></div>`;
 }
 
+// Kinds a provider is registered for. Anything else (e.g. 'gallery') has no detail card.
+const KNOWN = new Set(['sat', 'body', 'star', 'constellation', 'craft', 'world', 'launch']);
+
+function renderUnavailable() {
+  const s = sel, k = 'na|' + s.kind + '|' + s.id;
+  if (sig === k) return;
+  sig = k;
+  const sat = s.kind === 'sat';
+  const d = { title: sat ? `Satellite ${s.id}` : KNOWN.has(s.kind) ? `${s.kind[0].toUpperCase()}${s.kind.slice(1)} ${s.id}` : 'Nothing to show', icon: defaultIcon(s),
+    subtitle: sat ? 'Not in the catalog' : 'No details available' };
+  panel.style.setProperty('--dp-accent', 'var(--text-faint)');
+  card.innerHTML = header(d) + `<div class="dp-body"><p class="dp-note">${sat ? 'This satellite is not in the current catalog. It may have decayed, or the number may be wrong.' : 'There is nothing to display for this selection. Close this panel to carry on.'}</p></div>`;
+}
+
 function render() {
   if (!sel) return;
+  // Selections that are really "open something else": the telescope-photo gallery.
+  if (sel.kind === 'gallery') {
+    const id = sel.id; state.set('selection', null);
+    import('../gallery/index.js').then(m => m.openGallery(!id || id === 'all' ? 'hubble' : id)).catch(e => console.error('[detail:gallery]', e));
+    return;
+  }
   let d = null;
   try { d = state.getDetail(sel, now()); } catch (e) { console.error('[detail]', e); }
-  if (!d) { renderLoading(); return; }
+  if (!d) {
+    // Providers register when their module loads: show the skeleton first, then give up gracefully.
+    const waited = performance.now() - selSince;
+    const limit = !KNOWN.has(sel.kind) ? 1200 : sel.kind === 'sat' ? (isFullCatalog() ? 2500 : 40000) : 15000;
+    if (waited > limit && !(sel.kind === 'sat' && getSat(sel.id))) renderUnavailable(); else renderLoading();
+    return;
+  }
+  try { renderDetail(d); } catch (e) { console.error('[detail]', e); renderUnavailable(); }
+}
+
+function renderDetail(d) {
   const stats = (d.stats || []).slice(0, 6), rows = d.rows || [], actions = d.actions || [];
   const icon = d.icon || defaultIcon(sel);
   const k = JSON.stringify([sel.kind, sel.id, d.title, d.subtitle, d.color, icon, stats.map(s => [s.label, s.unit]), rows.map(r => r.label), !!d.note, actions.map(a => a.label), d.media?.src || '']);
@@ -131,6 +165,8 @@ export function init() {
 
   card.addEventListener('click', e => {
     if (e.target.closest('.dp-close')) { state.set('selection', null); return; }
+    const sh = e.target.closest('.dp-share');
+    if (sh) { import('./share.js').then(m => m.toggleShare(sh)).catch(err => console.error('[detail:share]', err)); return; }
     const b = e.target.closest('[data-a]');
     if (b) { try { latestActions[+b.dataset.a]?.onClick?.(); } catch (err) { console.error(err); } }
   });
@@ -142,11 +178,11 @@ export function init() {
     const was = sel;
     sel = s;
     if (!s) { hide(); return; }
-    sig = '';
+    sig = ''; selSince = performance.now();
     if (was && (was.kind !== s.kind || was.id !== s.id)) { card.classList.remove('swap'); void card.offsetWidth; card.classList.add('swap'); }
     show();
     render();
   });
   state.on('catalogReady', () => sel && render());
-  if (state.get('selection')) { sel = state.get('selection'); show(); render(); }
+  if (state.get('selection')) { sel = state.get('selection'); selSince = performance.now(); show(); render(); }
 }

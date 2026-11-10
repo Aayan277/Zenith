@@ -8,6 +8,12 @@ import { computeScore, reasonText } from './score.js';
 import { ensurePasses, getPasses } from './passes.js';
 import { fetchKp, assess } from './aurora.js';
 import { openLocationPicker, useMyLocation } from './location.js';
+import { computeUp, renderUp } from './summary.js';
+import { onLaunches, loadLaunches } from '../launches/data.js';
+import { calBtn, openCalMenu } from '../events/calmenu.js';
+import { ensureEvents, activeShowers } from '../events/index.js';
+import { SITE_URL } from '../util/ics.js';
+import '../events/detail.js';
 import { $, esc, clamp, fmtTime, zoneAbbr, relDay, countdown, dur, compass, magDots, magLabel, skeleton, polarSvg } from './util.js';
 
 const ctx = {
@@ -43,6 +49,7 @@ export async function init() {
     <div class="tn-body scroll">
       <div id="tn-banner"></div>
       <div class="tn-loc" id="tn-loc"></div>
+      <section class="tn-card tn-up" id="tn-up" aria-label="Up tonight"></section>
       <section class="tn-card tn-score" id="tn-score" aria-label="Tonight score"></section>
       <div class="tn-card tn-iss" id="tn-iss"></div>
       <section class="tn-card" id="tn-passes" aria-label="Upcoming passes"></section>
@@ -51,13 +58,20 @@ export async function init() {
       <section class="tn-card" id="tn-aurora" aria-label="Aurora chance"></section>
       <p class="tn-foot">Data: CelesTrak · Open-Meteo · NOAA SWPC</p>
     </div>`;
-  for (const id of ['banner', 'loc', 'score', 'iss', 'passes', 'sun', 'cloud', 'aurora']) els[id] = $('#tn-' + id, root);
+  for (const id of ['banner', 'loc', 'up', 'score', 'iss', 'passes', 'sun', 'cloud', 'aurora']) els[id] = $('#tn-' + id, root);
   setupCollapse();
   ctx.loc = state.get('location');
   els.loc.addEventListener('click', e => { if (e.target.closest('[data-change]')) openLocationPicker(); });
   els.banner.addEventListener('click', onBanner);
-  els.iss.addEventListener('click', () => { const p = nextIss(); if (p) selectSat(p.satId); });
+  els.iss.addEventListener('click', e => {
+    const c = e.target.closest('[data-cal]');
+    if (c) { e.stopPropagation(); const p = nextIss(); if (p) openCalMenu(c, () => passSpec(p)); return; }
+    const p = nextIss(); if (p) selectSat(p.satId);
+  });
+  els.up.addEventListener('click', onUpClick);
   els.passes.addEventListener('click', e => {
+    const c = e.target.closest('[data-cal]');
+    if (c) { e.stopPropagation(); const p = (ctx.passes || []).find(x => `${x.satId}:${x.start}` === c.dataset.cal); if (p) openCalMenu(c, () => passSpec(p)); return; }
     if (e.target.closest('[data-more]')) { ctx.showAllPasses = !ctx.showAllPasses; renderPasses(); return; }
     const r = e.target.closest('[data-sat]'); if (r) selectSat(+r.dataset.sat);
   });
@@ -73,7 +87,9 @@ export async function init() {
   state.on('view', () => { if (isMobile()) setSheet(false); });
   state.on('selection', s => { root.classList.toggle('detail-open', !!s && isMobile()); if (s && isMobile()) setSheet(false); });
   root.classList.toggle('detail-open', !!state.get('selection') && isMobile());
-  state.on('passes', p => { if (p !== ctx.passes) { ctx.passes = p; ctx.passesPending = false; renderIss(); renderPasses(); } });
+  state.on('passes', p => { if (p !== ctx.passes) { ctx.passes = p; ctx.passesPending = false; renderIss(); renderPasses(); renderUpCard(); } });
+  onLaunches(() => renderUpCard());
+  setTimeout(() => loadLaunches().catch(() => {}), 2500);
   setInterval(() => { if (!document.hidden) tick(); }, 1000);
   refreshAll();
 }
@@ -136,12 +152,12 @@ function refreshAll() {
   renderAll();
   fetchWeather(loc.lat, loc.lon).then(w => {
     if (my !== token) return;
-    ctx.weather = w; ctx.weatherPending = false; learnZone(w.tz);
+    ctx.weather = w; ctx.weatherPending = false; if (!w.tzEstimated) learnZone(w.tz);
     if (w.elevation != null && loc.source !== 'default' && !loc.elevM) { /* keep user's elevation untouched */ }
     computeAstro(); renderAll();
   }).catch(e => { if (my !== token) return; ctx.weatherErr = e; ctx.weatherPending = false; computeAstro(); renderAll(); });
   ensurePasses(true).catch(e => { if (my !== token) return; ctx.passesErr = e; ctx.passesPending = false; renderIss(); renderPasses(); });
-  fetchKp().then(rows => { if (my !== token) return; ctx.aurora = rows; ctx.auroraPending = false; renderAurora(); })
+  fetchKp().then(rows => { if (my !== token) return; ctx.aurora = rows; ctx.auroraPending = false; renderAurora(); renderUpCard(); })
     .catch(e => { if (my !== token) return; ctx.auroraErr = e; ctx.auroraPending = false; renderAurora(); });
   renderBanner();
 }
@@ -162,14 +178,15 @@ function computeAstro() {
 let lastScoreShown = 0;
 function tick() {
   const t = clock.now();
-  if (ctx.loc && (Math.abs(t - ctx.computedAt) > 90 * 60e3 && Date.now() - ctx.computedReal > 4000)) { computeAstro(); renderScore(); renderSun(); renderCloud(); }
+  if (ctx.loc && (Math.abs(t - ctx.computedAt) > 90 * 60e3 && Date.now() - ctx.computedReal > 4000)) { computeAstro(); renderScore(); renderSun(); renderCloud(); renderUpCard(); }
+  if (Date.now() - lastUp > 60e3) renderUpCard();
   // passes window maintenance (location change handled in refreshAll)
   ensurePasses().catch(() => {});
   updateCountdown();
 }
 
 // ---------- rendering ----------
-function renderAll() { renderLoc(); renderBanner(); renderScore(); renderIss(); renderPasses(); renderSun(); renderCloud(); renderAurora(); }
+function renderAll() { renderLoc(); renderUpCard(); renderBanner(); renderScore(); renderIss(); renderPasses(); renderSun(); renderCloud(); renderAurora(); }
 const safe = (fn, el) => { try { fn(); } catch (e) { console.error('[tonight render]', e); el.innerHTML = errorBlock('Something went wrong showing this card.'); } };
 const errorBlock = msg => `<div class="tn-err"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16.5v.5"/></svg><span>${esc(msg)}</span></div>`;
 const head = (title, right = '') => `<div class="tn-card-head"><span class="eyebrow">${title}</span>${right ? `<span class="tn-right">${right}</span>` : ''}</div>`;
@@ -177,6 +194,40 @@ const head = (title, right = '') => `<div class="tn-card-head"><span class="eyeb
 function renderLoc() {
   const l = ctx.loc;
   els.loc.innerHTML = `<span class="tn-pin">${PIN}</span><span class="tn-place" title="${esc(l.name)}">${esc(l.name)}</span><span class="tn-coord mono">${Math.abs(l.lat).toFixed(1)}°${l.lat < 0 ? 'S' : 'N'}</span><button type="button" class="tn-link" data-change>change</button>`;
+}
+
+let lastUp = 0, upSig = '';
+function renderUpCard() {
+  lastUp = Date.now();
+  safe(() => {
+    if (!ctx.loc) return;
+    const html = renderUp(ctx.astroErr ? [] : computeUp(ctx, clock.now()), clock.now(), ctx.passesPending);
+    if (html !== upSig) { upSig = html; els.up.innerHTML = html; }
+  }, els.up);
+}
+async function onUpClick(e) {
+  const b = e.target.closest('[data-up]'); if (!b) return;
+  const kind = b.dataset.up, id = b.dataset.id;
+  const tabs = () => import('../ui/paneltabs.js');
+  if (kind === 'planet' || kind === 'body') {
+    state.set('selection', { kind: 'body', id });
+    state.set('view', 'sky');
+    setTimeout(() => state.emit('focus', { kind: 'body', id }), 300); setTimeout(() => state.emit('focus', { kind: 'body', id }), 1500);
+  } else if (kind === 'sat') selectSat(+id);
+  else if (kind === 'launch') (await tabs()).showTab('launches');
+  else if (kind === 'aurora') (await tabs()).showTab('aurora');
+  else if (kind === 'shower') {
+    const t = await tabs(); t.showTab('events');
+    const evs = await ensureEvents();
+    const sh = activeShowers(clock.now()).find(s => s.id === id);
+    const ev = evs.find(x => x.shower?.id === id && (!sh || Math.abs(x.t - sh.peak) < 86400e3));
+    if (ev) state.set('selection', { kind: 'event', id: ev.id });
+  }
+}
+function passSpec(p) {
+  const place = ctx.loc?.name || '', name = shortName(p.name) || p.name;
+  return { key: `pass-${p.satId}-${Math.round(p.start / 1000)}`, title: `${name} pass, ${Math.round(p.maxEl)}° max`, start: p.start, end: p.end, location: place, url: SITE_URL, link: { view: 'sky', t: p.start, sel: { kind: 'sat', id: p.satId } },
+    description: `Visible ${name} pass over ${place}.\nDirection: ${compass(p.startAz)} to ${compass(p.endAz)}\nMax elevation: ${Math.round(p.maxEl)}°\nBrightness: ${magLabel(p.mag)} (mag ${p.mag.toFixed(1)})\nDuration: ${dur(p.end - p.start)}\nTimes are in ${zoneAbbr(p.start)}, the time zone of ${place}.` };
 }
 
 function renderBanner() {
@@ -259,7 +310,7 @@ function renderIss() {
     if (!p) { iss.innerHTML = head('Next ISS pass') + `<p class="tn-empty">No visible ISS pass in the next 3 days from here. Passes need a dark sky while the station is still in sunlight.</p>`; iss.classList.remove('click'); return; }
     iss.classList.add('click'); iss.tabIndex = 0; iss.setAttribute('role', 'button');
     const now = clock.now();
-    iss.innerHTML = `${head('Next ISS pass', '<span class="tn-live-dot"></span>ISS')}
+    iss.innerHTML = `${head('Next ISS pass', '<span class="tn-live-dot"></span>ISS' + calBtn('data-cal="next"'))}
       <div class="tn-iss-main">
         <div class="tn-iss-txt">
           <div class="tn-count mono" data-count>${now >= p.start ? 'Overhead now' : 'in ' + countdown(p.start - now)}</div>
@@ -303,6 +354,7 @@ function renderPasses() {
         <div class="tn-pt"><span class="tn-day">${relDay(p.start, now)}</span><span class="mono">${fmtTime(p.start)}</span></div>
         <div class="tn-pn"><b>${esc(shortName(p.name))}</b><span>${passInfoLine(p)} · ${dur(p.end - p.start)}</span></div>
         <div class="tn-pe"><span class="mono">${Math.round(p.maxEl)}°</span>${magDots(p.mag)}</div>
+        ${calBtn(`data-cal="${p.satId}:${p.start}"`)}
       </div>`).join('') + `</div>` + (list.length > 6 ? `<button class="tn-link tn-more" type="button" data-more>${ctx.showAllPasses ? 'Show fewer' : `Show all ${list.length}`}</button>` : '');
   }, els.passes);
 }
@@ -354,7 +406,8 @@ function renderCloud() {
     });
     svg += '</svg>';
     const avg = Math.round(hrs.reduce((a, h) => a + h.cloud, 0) / hrs.length);
-    el.innerHTML = `${head('Cloud cover', `Next 12 h · ${zoneAbbr(now)}`)}${svg}
+    const srcNote = ctx.weather.source === 'met.no' ? ' · MET Norway' : ctx.weather.stale ? ' · saved forecast' : '';
+    el.innerHTML = `${head('Cloud cover', `Next 12 h · ${zoneAbbr(now)}${srcNote}`)}${svg}
       <div class="tn-legend"><span><i class="sw hi"></i>Total</span><span><i class="sw lo"></i>Low cloud</span><span><i class="sw ni"></i>Dark hours</span><span class="mono tn-avg">avg ${avg}%</span></div>`;
   }, els.cloud);
 }

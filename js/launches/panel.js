@@ -4,7 +4,8 @@ import * as clock from '../clock.js';
 import { store, onLaunches, loadLaunches, pending } from './data.js';
 import { esc, statusOf, parts, p2, short, fmtLocalFull, fmtUtc, fmtDay, fmtClock, hasClock, precisionNote, isDone, fmtAgo, ICON } from './util.js';
 import { isArmed, toggleReminder, LEAD_MIN } from './reminders.js';
-import { showPad, openWebcast } from './detail.js';
+import { showPad, openWebcast, addLaunchToCalendar } from './detail.js';
+import { calBtn } from '../events/calmenu.js';
 import { dayKey } from '../tonight/util.js';
 import { tzLabel } from '../util/time.js';
 
@@ -41,6 +42,7 @@ function heroHtml(l, now) {
         ${l.webcast ? `<button type="button" class="btn primary" data-act="watch" data-id="${esc(l.id)}">${ICON.play}<span>${l.live ? 'Watch live' : 'Watch'}</span></button>` : ''}
         <button type="button" class="btn" data-act="pad" data-id="${esc(l.id)}">${ICON.pin}<span>Show pad</span></button>
         <button type="button" class="btn lc-bell${armed ? ' on' : ''}" data-act="bell" data-id="${esc(l.id)}" aria-pressed="${armed}" aria-label="${armed ? 'Remove reminder' : `Remind me ${LEAD_MIN} minutes before launch`}" title="${armed ? 'Reminder on (tap to remove)' : `Notify me at T−${LEAD_MIN} min`}">${armed ? ICON.bellOn : ICON.bell}</button>
+        ${l.net != null && !isDone(l) ? calBtn(`data-act="cal" data-id="${esc(l.id)}"`) : ''}
       </div>
     </div>
   </article>`;
@@ -137,6 +139,7 @@ export function mount(pane) {
     if (act === 'watch' && l) openWebcast(l);
     else if (act === 'pad' && l) { state.set('selection', { kind: 'launch', id }); showPad(l); }
     else if (act === 'bell' && l) toggleReminder(l);
+    else if (act === 'cal' && l) addLaunchToCalendar(l, b);
     else if (act === 'more') { showAll = !showAll; render(); }
     else if (act === 'refresh' || act === 'retry') loadLaunches({ force: true });
     else if (b.dataset.open) openLaunch(b.dataset.open);

@@ -1,0 +1,76 @@
+/* Events tab (js/events/panel.js). Tokens from base.css only. */
+.ev-pane { gap: 12px; }
+
+/* Filter chips */
+.ev-filters { display: flex; gap: 4px; flex: none; }
+.ev-f { flex: 1 1 auto; padding: 6px 4px; border-radius: 999px; border: 1px solid var(--glass-border); background: rgba(255,255,255,.035); color: var(--text-dim); font-size: 12px; font-weight: 500; cursor: pointer; white-space: nowrap; transition: background .18s, color .18s, border-color .18s; }
+.ev-f:hover { color: var(--text); background: rgba(92,225,255,.07); }
+.ev-f.on { color: var(--text); background: rgba(92,225,255,.15); border-color: rgba(92,225,255,.4); }
+.ev-f:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Loading */
+.ev-loading { flex: none; }
+.ev-load-t { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; font-size: 12px; color: var(--text-dim); }
+.ev-bar { height: 4px; border-radius: 4px; background: rgba(255,255,255,.07); overflow: hidden; margin-bottom: 12px; }
+.ev-bar i { display: block; height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .25s; }
+
+/* Hero */
+.ev-hero { --c: var(--accent); position: relative; flex: none; padding: 14px; border-radius: var(--radius-sm); overflow: hidden; cursor: pointer;
+  background: linear-gradient(150deg, color-mix(in srgb, var(--c) 17%, transparent), rgba(255,255,255,.03) 62%); border: 1px solid color-mix(in srgb, var(--c) 38%, transparent);
+  transition: border-color .2s, box-shadow .2s; }
+.ev-hero:hover, .ev-hero:focus-visible { border-color: color-mix(in srgb, var(--c) 70%, transparent); box-shadow: 0 0 30px color-mix(in srgb, var(--c) 18%, transparent); outline: none; }
+.ev-hero-glow { position: absolute; right: -50px; top: -60px; width: 190px; height: 190px; border-radius: 50%; background: radial-gradient(circle, color-mix(in srgb, var(--c) 30%, transparent), transparent 68%); pointer-events: none; }
+.ev-hero > :not(.ev-hero-glow) { position: relative; }
+.ev-hero-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.ev-hero .eyebrow { color: var(--c); }
+.ev-hero-main { display: flex; align-items: center; gap: 12px; }
+.ev-hero-ic { width: 50px; height: 50px; flex: none; display: grid; place-items: center; border-radius: 14px; color: var(--c); background: rgba(5,7,13,.45); border: 1px solid color-mix(in srgb, var(--c) 40%, transparent); }
+.ev-hero-txt { min-width: 0; }
+.ev-hero h3 { margin: 0; font-size: 19px; font-weight: 600; letter-spacing: -.01em; line-height: 1.15; }
+.ev-hero-txt p { margin: 3px 0 0; font-size: 13px; color: var(--text-dim); }
+.ev-hero-when { margin-top: 12px; font-size: 13px; color: var(--text); }
+.ev-hero-vis { margin: 6px 0 0; font-size: 12.5px; line-height: 1.4; color: var(--text-dim); }
+.ev-hero-vis .ev-vis { margin-right: 8px; }
+.ev-hero-btns { display: flex; gap: 8px; align-items: center; margin-top: 14px; }
+.ev-hero-btns .btn { padding: 7px 14px; font-size: 13px; }
+.ev-hero-btns .cal-btn { width: 34px; height: 34px; border-color: var(--glass-border); color: var(--text-dim); }
+
+/* Countdown chip */
+.ev-chip { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; white-space: nowrap; background: rgba(255,255,255,.06); color: var(--text-dim); }
+.ev-chip.near { background: rgba(92,225,255,.1); color: var(--accent); }
+.ev-chip.soon { background: rgba(255,179,71,.16); color: var(--sun); box-shadow: 0 0 14px rgba(255,179,71,.14); }
+.ev-chip.past { opacity: .6; }
+.ev-chip.big { font-family: var(--mono); font-size: 12px; padding: 4px 11px; font-weight: 500; }
+
+/* Visibility / rating badges */
+.ev-vis { display: inline-block; padding: 1px 7px; border-radius: 6px; font-size: 10.5px; letter-spacing: .02em; white-space: nowrap; vertical-align: 1px; }
+.ev-vis.yes { color: var(--good); background: rgba(92,225,165,.12); }
+.ev-vis.part { color: var(--warn); background: rgba(255,209,102,.12); }
+.ev-vis.no { color: var(--text-faint); background: rgba(255,255,255,.06); }
+.ev-rate { font-size: 10.5px; letter-spacing: .02em; padding: 1px 7px; border-radius: 6px; white-space: nowrap; background: rgba(255,255,255,.06); color: var(--text-dim); }
+.ev-rate.Excellent { color: var(--good); background: rgba(92,225,165,.14); }
+.ev-rate.Good { color: #b6e35c; background: rgba(182,227,92,.12); }
+.ev-rate.Fair { color: var(--warn); background: rgba(255,209,102,.12); }
+
+/* Month groups + rows */
+.ev-group { display: flex; flex-direction: column; flex: none; }
+.ev-month { position: sticky; top: -2px; z-index: 2; display: flex; justify-content: space-between; align-items: center; margin: 0; padding: 8px 6px 6px; font-weight: 400; font-size: 11px; color: var(--text-faint); background: linear-gradient(rgba(9,14,27,.96) 70%, rgba(9,14,27,0)); }
+.ev-month .eyebrow { color: var(--text-dim); }
+.ev-row { --c: var(--accent); display: grid; grid-template-columns: 34px 24px minmax(0, 1fr) auto 24px; gap: 8px; align-items: center; padding: 8px 4px 8px 6px; margin: 0 -4px; border-radius: 10px; cursor: pointer; position: relative; transition: background .15s; }
+.ev-row + .ev-row { border-top: 1px solid rgba(150,190,255,.06); }
+.ev-row:hover, .ev-row:focus-visible, .ev-row.sel { background: rgba(92,225,255,.07); outline: none; }
+.ev-row.sel::before { content: ''; position: absolute; left: -4px; top: 8px; bottom: 8px; width: 2px; border-radius: 2px; background: var(--c); }
+.ev-row:focus-visible { box-shadow: inset 0 0 0 1px rgba(92,225,255,.4); }
+.ev-date { display: flex; flex-direction: column; align-items: center; line-height: 1.05; }
+.ev-date b { font-size: 17px; font-weight: 500; }
+.ev-date i { font-style: normal; font-size: 9.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--text-faint); margin-top: 2px; }
+.ev-ic { width: 26px; height: 26px; display: grid; place-items: center; color: var(--c); }
+.ev-txt { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.ev-txt b { font-weight: 500; font-size: 13.5px; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.ev-txt span { font-size: 11.5px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ev-end { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.ev-row.dim .ev-txt b, .ev-row.dim .ev-ic { opacity: .62; }
+.ev-row .cal-btn { opacity: .45; }
+.ev-row:hover .cal-btn, .ev-row:focus-within .cal-btn, .ev-row .cal-btn:hover { opacity: 1; }
+@media (hover: none) { .ev-row .cal-btn, .tn-pass .cal-btn { opacity: .85; } }
+@media (prefers-reduced-motion: reduce) { .ev-hero, .ev-bar i { animation: none; transition: none; } }

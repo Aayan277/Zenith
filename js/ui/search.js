@@ -81,6 +81,22 @@ function loadExtra() {
       await m.loadLaunches();
       out.push(...m.searchEntries(norm));
     } catch {}
+    // Deep-sky objects (Messier + NGC/IC) and meteor showers
+    try {
+      const d = await import('../sky/dso.js'); await d.loadDso();
+      for (const o of d.dso.list) {
+        const key = norm([o.id, o.id.replace(/^([A-Z]+)\s*/, '$1 '), o.name, o.aka, o.con].filter(Boolean).join(' '));
+        out.push({ kind: 'dso', id: o.id, name: o.name || o.id, sub: `${d.TYPE_STYLE[o.type].label} · ${o.id}${o.name ? '' : ' · ' + o.con} · mag ${o.mag}`,
+                   color: `rgb(${o.rgb})`, key, compact: key.replace(/ /g, ''), bonus: 30 - o.mag * 2 });
+      }
+    } catch {}
+    try {
+      const ev = await import('../events/index.js');
+      for (const s of ev.getShowers()) {
+        const key = norm(`${s.name} meteor shower radiant`);
+        out.push({ kind: 'radiant', id: s.id, name: `${s.name} radiant`, sub: `Meteor shower · ZHR ${s.zhr}`, color: '#ffde96', key, compact: key.replace(/ /g, ''), bonus: 10 });
+      }
+    } catch {}
     // Telescope photo galleries ("hubble photos", "telescopes")
     try {
       const { TELESCOPES } = await import('../gallery/telescopes.js');
@@ -194,6 +210,7 @@ function choose(i) {
   const it = results[i]; if (!it) return;
   if (it.kind === 'gallery') { closeSearch(false); import('../gallery/index.js').then(m => m.openGallery(it.id === 'all' ? 'hubble' : it.id)); return; }
   const sel = { kind: it.kind, id: it.id };
+  if (it.kind === 'dso' || it.kind === 'radiant') state.set('view', 'sky');
   if (it.kind === 'sat' && it.cat && state.get('filters')[it.cat] === false) state.patch('filters', { [it.cat]: true });
   closeSearch(false);
   state.set('selection', sel);

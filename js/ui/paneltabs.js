@@ -1,4 +1,4 @@
-// Turns the left #panel-tonight into a tabbed panel: Tonight | Launches | Aurora.
+// Turns the left #panel-tonight into a tabbed panel: Tonight | Launches | Aurora | Events.
 // The Tonight content is left exactly as js/tonight/tonight.js renders it; the other tabs mount lazily
 // (their JS + CSS load the first time the tab opens, or when something asks for it).
 import * as state from '../state.js';
@@ -7,6 +7,7 @@ const TABS = [
   { id: 'tonight',  label: 'Tonight' },
   { id: 'launches', label: 'Launches', css: 'css/launches.css', load: () => import('../launches/panel.js') },
   { id: 'aurora',   label: 'Aurora',   css: 'css/aurora.css',   load: () => import('../aurora/panel.js') },
+  { id: 'events',   label: 'Events',   css: 'css/events.css',   load: () => import('../events/panel.js') },
 ];
 let root, strip, panes = {}, current = 'tonight', badges = {};
 const mounted = {};

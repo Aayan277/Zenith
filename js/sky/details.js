@@ -39,17 +39,38 @@ function mergeSun(base, nowMs) {
 }
 // --- /SUN
 
+// Every provider runs inside a try/catch: a throwing provider (astronomy-engine throws for Earth, bad data …) must never leave
+// the detail panel stuck on "Locating…". On error a minimal card is returned instead.
+function safe(kind, fn) {
+  return (sel, nowMs) => {
+    try { return fn(sel, nowMs); }
+    catch (e) {
+      console.warn(`[sky] ${kind} detail`, sel?.id, e);
+      return { title: String(sel?.id ?? kind), subtitle: 'Details unavailable', icon: kind === 'star' ? 'star' : kind === 'constellation' ? 'constellation' : 'planet', stats: [], rows: [], note: 'Something went wrong while computing this object.' };
+    }
+  };
+}
+const reg = (kind, fn) => state.registerDetailProvider(kind, safe(kind, fn));
+
 export function registerProviders(ctx) {
   const A = () => window.Astronomy;
 
   // ---- bodies ----
-  state.registerDetailProvider('body', (sel, nowMs) => {
+  reg('body', (sel, nowMs) => {
     if (sel.id === 'Aurora') return ctx.aurora ? ctx.aurora(nowMs) : null;
+    if (sel.id === 'Earth') { // not a sky body (astronomy-engine throws for it): defer to the System view's 'world' provider, else a simple card
+      let w = null; try { w = state.getDetail({ kind: 'world', id: 'Earth' }, nowMs); } catch {}
+      return w || { title: 'Earth', subtitle: 'Our home planet', color: '#5cb8ff', icon: 'planet',
+        stats: [{ label: 'Diameter', value: '12,742', unit: 'km' }, { label: 'Distance to Sun', value: '1.00', unit: 'AU' }, { label: 'Day length', value: '24', unit: 'h' }],
+        rows: [{ label: 'Orbital period', value: '365.25 days' }, { label: 'Moons', value: '1' }],
+        note: 'You are here. Open the System view for Earth\'s place among the planets.',
+        actions: [{ label: 'Open System view', onClick: () => state.set('view', 'system') }] };
+    }
     if (!A()) return null;
     const loc = state.get('location');
     const frame = ctx.frameAt(nowMs);
     const b = computeBodies(nowMs, loc, frame, true, sel.id)[0];
-    if (!b) return null;
+    if (!b) return { title: String(sel.id), subtitle: 'Not visible from here', icon: 'planet', stats: [], rows: [], note: 'This object is not part of the sky view.' };
     const rts = riseTransitSet('body:' + sel.id, sel.id, loc, nowMs);
     let con = '—'; try { con = A().Constellation(b.ra, b.dec).name; } catch {}
     const stats = [
@@ -90,7 +111,7 @@ export function registerProviders(ctx) {
   });
 
   // ---- stars ----
-  state.registerDetailProvider('star', (sel, nowMs) => {
+  reg('star', (sel, nowMs) => {
     const d = ctx.data(); if (!d || !A()) return null;
     const i = d.stars.byHip.get(sel.id); if (i === undefined) return null;
     const loc = state.get('location');
@@ -145,7 +166,7 @@ export function registerProviders(ctx) {
       if (d.stars.mag[i] < d.stars.mag[s.best]) s.best = i;
     }
   }
-  state.registerDetailProvider('constellation', (sel, nowMs) => {
+  reg('constellation', (sel, nowMs) => {
     const d = ctx.data(); if (!d || !A()) return null;
     const c = d.consById.get(sel.id); if (!c) return null;
     const frame = ctx.frameAt(nowMs);

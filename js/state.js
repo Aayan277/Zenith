@@ -85,7 +85,7 @@ try {
   if (saved?.filters) state.filters = { ...state.filters, ...saved.filters };
   if (typeof saved?.highlightsOnly === 'boolean') state.highlightsOnly = saved.highlightsOnly;
 } catch {}
-const persist = () => { try { localStorage.setItem('skywatch:prefs', JSON.stringify({ location: state.location, filters: state.filters, highlightsOnly: state.highlightsOnly })); } catch {} };
+const persist = () => { if (state.location?.source === 'link') return; /* a shared link's place is temporary */ try { localStorage.setItem('skywatch:prefs', JSON.stringify({ location: state.location, filters: state.filters, highlightsOnly: state.highlightsOnly })); } catch {} };
 on('location', persist);
 on('filters', persist);
 on('highlightsOnly', persist);

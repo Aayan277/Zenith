@@ -38,7 +38,7 @@
 
 /* Cards */
 .tn-card { padding: 14px 14px 14px; border-radius: var(--radius-sm); background: rgba(255,255,255,.035); border: 1px solid var(--glass-border); flex: none; animation: tnUp .55s both; }
-#tn-score { animation-delay: .1s; } #tn-iss { animation-delay: .17s; } #tn-passes { animation-delay: .24s; }
+#tn-up { animation-delay: .06s; } #tn-score { animation-delay: .1s; } #tn-iss { animation-delay: .17s; } #tn-passes { animation-delay: .24s; }
 #tn-sun { animation-delay: .31s; } #tn-cloud { animation-delay: .38s; } #tn-aurora { animation-delay: .45s; }
 @keyframes tnUp { from { opacity: 0; transform: translateY(10px); } }
 .tn-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
@@ -98,7 +98,7 @@
 
 /* Pass list */
 .tn-passlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
-.tn-passlist .tn-pass { display: grid; grid-template-columns: 64px 1fr auto; gap: 10px; align-items: center; padding: 9px 6px; margin: 0 -6px; border-radius: 8px; cursor: pointer; border-top: 1px solid rgba(150,190,255,.07); transition: background .15s; }
+.tn-passlist .tn-pass { display: grid; grid-template-columns: 64px 1fr auto 24px; gap: 10px; align-items: center; padding: 9px 6px; margin: 0 -6px; border-radius: 8px; cursor: pointer; border-top: 1px solid rgba(150,190,255,.07); transition: background .15s; }
 .tn-passlist .tn-pass:first-child { border-top: 0; }
 .tn-passlist .tn-pass:hover, .tn-passlist .tn-pass:focus-visible { background: rgba(92,225,255,.07); }
 .tn-pt { display: flex; flex-direction: column; font-size: 14px; }
@@ -145,6 +145,44 @@
 #tn-aurora.hot { border-color: rgba(92,225,165,.5); background: linear-gradient(135deg, rgba(92,225,165,.12), rgba(167,139,255,.1)); }
 
 .tn-foot { margin: 4px 0 0; text-align: center; font-size: 10.5px; color: var(--text-faint); letter-spacing: .04em; flex: none; }
+
+/* "Up tonight" summary */
+.tn-up { padding-bottom: 8px; }
+.up-list { list-style: none; margin: 0 -6px; padding: 0; display: flex; flex-direction: column; }
+.up-row { --c: var(--accent); width: 100%; display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 7px 6px; border: 0; border-radius: 9px; background: transparent; color: inherit; text-align: left; cursor: pointer; position: relative; transition: background .18s; }
+.up-row::before { content: ''; position: absolute; left: 0; top: 9px; bottom: 9px; width: 2px; border-radius: 2px; background: var(--c); opacity: 0; transform: scaleY(.4); transition: opacity .18s, transform .18s; }
+.up-row:hover, .up-row:focus-visible { background: rgba(92,225,255,.07); outline: none; }
+.up-row:hover::before, .up-row:focus-visible::before { opacity: .9; transform: none; }
+.up-row:focus-visible { box-shadow: inset 0 0 0 1px rgba(92,225,255,.4); }
+.up-ic { width: 24px; height: 24px; display: grid; place-items: center; color: var(--c); }
+.up-dot { width: 10px; height: 10px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #fff 0, var(--c) 45%, color-mix(in srgb, var(--c) 55%, #000) 100%); box-shadow: 0 0 9px color-mix(in srgb, var(--c) 70%, transparent); }
+.up-txt { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.up-txt b { font-weight: 500; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.up-txt span { font-size: 11.5px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.up-time { font-size: 11.5px; color: var(--text); white-space: nowrap; letter-spacing: -.01em; opacity: .92; }
+
+/* Add-to-calendar button + popover (js/events/calmenu.js) */
+.cal-btn { width: 26px; height: 26px; flex: none; display: inline-grid; place-items: center; padding: 0; border: 1px solid transparent; border-radius: 50%; background: transparent; color: var(--text-faint); cursor: pointer; transition: background .18s, color .18s, border-color .18s; }
+.cal-btn:hover, .cal-btn:focus-visible, .cal-btn[aria-expanded="true"] { color: var(--accent); background: rgba(92,225,255,.1); border-color: rgba(92,225,255,.28); outline: none; }
+.tn-pass .cal-btn { opacity: .55; } .tn-pass:hover .cal-btn, .tn-pass:focus-within .cal-btn, .tn-pass .cal-btn:hover { opacity: 1; }
+.tn-right .cal-btn { margin: -4px -4px -4px 2px; }
+.cal-menu { position: fixed; z-index: 90; width: 268px; padding: 8px; background: var(--glass-strong); box-shadow: var(--shadow); opacity: 0; transform: translateY(-4px) scale(.98); transform-origin: top right; transition: opacity .15s, transform .15s; }
+.cal-menu.open { opacity: 1; transform: none; }
+.cal-title { padding: 6px 8px 8px; font-size: 12px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-bottom: 1px solid rgba(150,190,255,.09); margin-bottom: 4px; }
+.cal-item { width: 100%; display: flex; align-items: center; gap: 12px; padding: 9px 8px; border: 0; border-radius: 9px; background: transparent; color: var(--text); text-align: left; text-decoration: none; cursor: pointer; font: inherit; }
+.cal-item svg { flex: none; color: var(--accent); }
+.cal-item span { display: flex; flex-direction: column; line-height: 1.25; }
+.cal-item b { font-weight: 500; font-size: 13.5px; }
+.cal-item i { font-style: normal; font-size: 11.5px; color: var(--text-faint); }
+.cal-item:hover, .cal-item:focus-visible { background: rgba(92,225,255,.09); outline: none; }
+.cal-note { display: flex; align-items: flex-start; gap: 7px; margin: 6px 4px 2px; padding: 8px 6px 2px; border-top: 1px solid rgba(150,190,255,.09); font-size: 11.5px; line-height: 1.35; color: var(--text-dim); }
+.cal-note svg { flex: none; margin-top: 2px; color: var(--good); }
+
+
+.lc-btns .cal-btn { width: 34px; height: 34px; border-color: var(--glass-border); color: var(--text-dim); }
+/* 4 tabs fit the 340px panel */
+.tn-panel[data-tab="events"] .tn-body { display: none; }
+.pt-tabs .pt-tab { padding-left: 5px; padding-right: 5px; font-size: 12.5px; }
 
 /* Modal */
 #modal-root:empty { display: none; }

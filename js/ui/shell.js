@@ -2,6 +2,9 @@
 import * as state from '../state.js';
 import { initSearch, openSearch } from './search.js';
 import { initLayers } from './layers.js';
+import { initHelp } from './help.js';
+import { plainKey } from './keys.js';
+import { SHARE_ICON, toggleShare } from './share.js';
 
 export const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
@@ -37,12 +40,16 @@ export async function init() {
       <button class="tb-btn glass tb-search" id="btn-search">
         ${ICON.search}<span class="tb-label">Search</span><kbd class="kbd">${kbd}</kbd>
       </button>
+      <button class="tb-btn glass" id="btn-share" aria-haspopup="dialog" aria-expanded="false">
+        ${SHARE_ICON}<span class="tb-label">Share</span>
+      </button>
       <div class="tb-layers-wrap">
         <button class="tb-btn glass" id="btn-layers" aria-haspopup="true" aria-expanded="false">
           ${ICON.layers}<span class="tb-label">Layers</span><span class="tb-badge" id="layers-badge"></span>
         </button>
         <div class="popover glass" id="layers-pop" role="dialog" aria-label="Layers" hidden></div>
       </div>
+      <button class="tb-btn tb-help glass" id="btn-help" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">?</button>
     </div>`;
 
   // --- view switch with sliding highlight
@@ -67,14 +74,25 @@ export async function init() {
   initSearch();
   bar.querySelector('#btn-search').addEventListener('click', () => openSearch());
   initLayers(bar);
+  initHelp();
+  const shareBtn = bar.querySelector('#btn-share');
+  shareBtn.addEventListener('click', () => toggleShare(shareBtn));
+  bar.querySelector('#btn-help').addEventListener('click', () => import('./help.js').then(m => m.openHelp()));
+
+  // 1 / 2 / 3 switch views
+  const VIEWS = { 1: 'globe', 2: 'sky', 3: 'system' };
+  document.addEventListener('keydown', e => {
+    if (VIEWS[e.key] && !e.shiftKey && plainKey(e)) { e.preventDefault(); state.set('view', VIEWS[e.key]); }
+  });
 
   // Accessible names: on wide screens the visible text ("Search Ctrl K", "Layers 9") is the name, so it always
   // matches what is shown. When the text labels are hidden (compact layout) the buttons need explicit labels.
   {
     const mqS = matchMedia('(max-width: 1100px)'), mqL = matchMedia('(max-width: 760px)');
+    const shBtn = bar.querySelector('#btn-share');
     const sBtn = bar.querySelector('#btn-search'), lBtn = bar.querySelector('#btn-layers'), badge = bar.querySelector('#layers-badge');
     const sync = () => {
-      if (mqS.matches) sBtn.setAttribute('aria-label', 'Search'); else sBtn.removeAttribute('aria-label');
+      if (mqS.matches) { sBtn.setAttribute('aria-label', 'Search'); shBtn.setAttribute('aria-label', 'Share link'); } else { sBtn.removeAttribute('aria-label'); shBtn.removeAttribute('aria-label'); }
       if (mqL.matches) lBtn.setAttribute('aria-label', `Layers ${badge.textContent}`.trim()); else lBtn.removeAttribute('aria-label');
     };
     mqS.addEventListener('change', sync); mqL.addEventListener('change', sync);
@@ -87,4 +105,6 @@ export async function init() {
     try { const m = await import(`./${name}.js`); await m.init?.(); }
     catch (e) { console.error(`[ui:${name}]`, e); }
   }
+  // First-visit tour (once, never from a shared link). Loaded only when it is going to run.
+  try { if (!localStorage.getItem('zenith:tour')) import('./tour.js').then(m => m.maybeStartTour()).catch(e => console.error('[ui:tour]', e)); } catch {}
 }

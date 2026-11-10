@@ -4,6 +4,10 @@
 // satellite catalog stream in afterwards; the sky view initialises when first needed (or when idle).
 import * as state from './state.js';
 import { loadCatalog } from './data/catalog.js';
+import { applyLink, initUrlSync } from './ui/url.js';
+
+// Shared link (?view=sky&sat=25544&t=...&loc=...): apply view, location and time before any module initialises.
+try { applyLink(); } catch (e) { console.error('[link]', e); }
 
 document.body.dataset.view = state.get('view');
 state.on('view', v => { document.body.dataset.view = v; });
@@ -72,6 +76,8 @@ function ensureSky() {
   state.on('selection', s => { if (s && s.kind !== 'sat') ensureSky(); });
   state.on('focus', () => ensureSky());
   if (state.get('view') === 'sky') ensureSky(); else idle(ensureSky, 4000);
+
+  try { initUrlSync(); } catch (e) { console.error('[url]', e); }
 
   await Promise.all([shell, tonight]);
   document.getElementById('boot').classList.add('done');
