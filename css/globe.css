@@ -109,3 +109,15 @@ body.riding .globe-canvas:active { cursor: grabbing; }
   .rh-bar .globe-btn.rh-exit span { display: inline; }
 }
 @media (prefers-reduced-motion: reduce) { .rh-live span { animation: none; } .ride-hud { transition: none; } }
+
+/* ---------- Imagery credit (js/globe/tiles/): only while streamed tiles are on screen ---------- */
+.globe-credit {
+  position: absolute; right: 14px; bottom: calc(var(--timebar-h) + 8px); z-index: 5;
+  font-size: 10px; letter-spacing: .02em; color: rgba(205, 220, 245, .62); text-shadow: 0 0 4px rgba(0, 0, 0, .9);
+  opacity: 0; pointer-events: none; transition: opacity .5s; white-space: nowrap; max-width: calc(100vw - 28px); overflow: hidden; text-overflow: ellipsis;
+}
+.globe-credit.on { opacity: 1; pointer-events: auto; }
+.globe-credit a { color: inherit; text-decoration: none; border-bottom: 1px solid rgba(205, 220, 245, .25); }
+.globe-credit a:hover, .globe-credit a:focus-visible { color: #fff; border-bottom-color: rgba(255, 255, 255, .7); }
+body.riding .globe-credit { z-index: 8; }
+@media (max-width: 760px) { .globe-credit { right: 8px; bottom: calc(var(--timebar-h) + 4px); font-size: 9px; } }

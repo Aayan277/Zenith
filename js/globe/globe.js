@@ -6,7 +6,7 @@ import { CATEGORIES } from '../state.js';
 import { now, getRate } from '../clock.js';
 import { loadCatalog, allSats, getSat, satrec } from '../data/catalog.js';
 import { onTick, requestTick, getTickIntervalMs } from '../data/propagator.js';
-import { createLoop, onVisibility, isHidden, reducedMotion, QualityGovernor } from '../util/governor.js';
+import { createLoop, onVisibility, isHidden, reducedMotion, QualityGovernor, idle } from '../util/governor.js';
 import { latLonToVec } from './coords.js';
 import { createEarth } from './earth.js';
 import { SatLayer } from './sats.js';
@@ -15,11 +15,13 @@ import { registerSatDetail } from './detail.js';
 import * as coords from './coords.js';
 import { attachGlobe, updateLayers, pickLayers } from './plugins.js';
 import { createRide } from './ride.js';
+import { createTiles } from './tiles/manager.js';
 
 const ISS_ID = 25544;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const easeInOut = (t) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 const easeOutQuart = (t) => 1 - Math.pow(1 - t, 4);
+const sstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
 
 // ---- quality tiers (adaptive): pixel ratio, then the cloud shell. ?quality=high pins the top tier. ----
 const DEVICE_DPR = Math.min(window.devicePixelRatio || 1, 2);
@@ -33,6 +35,9 @@ TIERS.push({ dpr: TIERS[TIERS.length - 1].dpr, clouds: false });
 // There a single frame can take ~250 ms and freeze the page, so we render a reduced-resolution globe without
 // clouds, skip the intro flight, and redraw about once a second when nothing is moving. Satellites drift
 // under a pixel per second at 1x anyway. ?quality=high opts out.
+const MIN_DIST_BASE = 1.12;      // closest orbit-view zoom with only the base texture (it is a ~10 km/pixel map)
+const MIN_DIST_TILES = 1.015;    // with streaming tiles the camera may go down to ~100 km altitude
+const lowData = () => { const c = navigator.connection; return !!(c && (c.saveData || /(^|-)2g$|3g/.test(c.effectiveType || ''))); };
 const SOFTWARE_GL_RE = /swiftshader|llvmpipe|softpipe|software|basic render|mesa offscreen/i;
 function detectSoftwareGL(renderer) {
   try {
@@ -73,7 +78,7 @@ export async function init() {
   const camera = new THREE.PerspectiveCamera(45, 1, 0.02, 400);
   const controls = new OrbitControls(camera, canvas);
   controls.enableDamping = true; controls.dampingFactor = 0.07;
-  controls.enablePan = false; controls.minDistance = 1.12; controls.maxDistance = 14;
+  controls.enablePan = false; controls.minDistance = MIN_DIST_BASE; controls.maxDistance = 14;
   controls.zoomSpeed = 0.7;
   // Created up front (frame/idleInterval are hoisted function declarations) so nothing can reach it before it exists.
   let interacting = false;   // declared before the loop so its interval callbacks can read it
@@ -83,6 +88,19 @@ export async function init() {
   renderer.userData = { ...(renderer.userData || {}), softwareGL };
   const earth = await createEarth(renderer);   // loads textures
   scene.add(earth.root);
+
+  // ---------- streaming imagery tiles (js/globe/tiles/) ----------
+  // Off on software GL (a frame already costs ~100 ms there and the render scale is 0.6, so finer imagery cannot show), on
+  // data-saver / slow connections, and with ?tiles=off. ?quality=high|max pins everything on, software GL or not.
+  const tilesWanted = !/[?&]tiles=off/.test(location.search) && !softwareGL && !lowData();
+  let tiles = null;
+  if (tilesWanted) {
+    try {
+      tiles = createTiles({ THREE, renderer, root: earth.root, shared: earth.shared, sun: earth.sun, softwareGL, pinned: PIN_QUALITY });
+      controls.minDistance = MIN_DIST_TILES;
+      setTimeout(() => idle(() => tiles && tiles.warmup(scene, camera), 4000), 3000);    // compile the (large) tile shader before the first tile needs it
+    } catch (e) { console.warn('[globe] imagery tiles unavailable', e); tiles = null; }
+  }
 
   const sats = new SatLayer();
   scene.add(sats.points);
@@ -110,6 +128,22 @@ export async function init() {
   btnGrid.title = 'Toggle lat/long grid';
   btnGrid.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/></svg><span>Grid</span>';
   btnGrid.addEventListener('click', () => { graticule.visible = !graticule.visible; btnGrid.classList.toggle('on', graticule.visible); });
+  const btnClouds = el('button', 'globe-btn on', ctl);
+  btnClouds.title = 'Show / hide the cloud layer';
+  btnClouds.setAttribute('aria-pressed', 'true');
+  btnClouds.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M7 18a4 4 0 0 1-.6-7.96A5.5 5.5 0 0 1 17 8.6 4.7 4.7 0 0 1 17.5 18z"/></svg><span>Clouds</span>';
+  let cloudsOn = true;
+  try { cloudsOn = localStorage.getItem('zenith:clouds') !== 'off'; } catch {}
+  const syncCloudsBtn = () => { btnClouds.classList.toggle('on', cloudsOn); btnClouds.setAttribute('aria-pressed', String(cloudsOn)); };
+  syncCloudsBtn();
+  btnClouds.addEventListener('click', () => {
+    cloudsOn = !cloudsOn; syncCloudsBtn(); loop.wake(500);
+    try { localStorage.setItem('zenith:clouds', cloudsOn ? 'on' : 'off'); } catch {}
+  });
+  // imagery credit: only shown while tiles are on screen
+  const credit = el('div', 'globe-credit', host);
+  credit.innerHTML = 'Imagery: <a href="https://earthdata.nasa.gov/gibs" target="_blank" rel="noopener">NASA GIBS</a> · <a href="https://s2maps.eu" target="_blank" rel="noopener" title="Sentinel-2 cloudless – https://s2maps.eu by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016)">Sentinel-2 cloudless by EOX (2016)</a>';
+  let creditOn = false;
 
   // ---------- sizing ----------
   let W = 1, H = 1, tier = 0;
@@ -148,7 +182,7 @@ export async function init() {
     camera, controls, renderer, host, canvas, sats, earth, softwareGL,
     cancelFly: () => { fly = null; },
     wake: (ms) => loop.wake(ms),
-    onChange: (on) => { follow && (follow.last = null); resize(); if (cloudMesh) cloudMesh.visible = on || TIERS[tier].clouds; loop.wake(600); },
+    onChange: (on) => { follow && (follow.last = null); resize(); applyClouds(); loop.wake(600); },
   });
 
   function stepFly(nowT) {
@@ -439,16 +473,24 @@ export async function init() {
   // Sustained > ~20 ms between full-rate frames steps down: pixel ratio 2 -> 1.5 -> 1, then the cloud shell.
   // It steps back up after a cooldown; a failed attempt doubles the cooldown. ?quality=high pins the top tier.
   const cloudMesh = earth.root.children.find(c => c.renderOrder === 1 && c.isMesh);
-  if (cloudMesh) cloudMesh.visible = TIERS[0].clouds;
+  // cloud shell opacity: user toggle x (orbit view: fades out when zoomed right in so the sharp ground shows; ride keeps clouds)
+  let cloudFade = 1;
+  function applyClouds() {
+    if (cloudMesh) cloudMesh.visible = cloudsOn && cloudFade > 0.01 && (ride.active || TIERS[tier].clouds);
+    earth.setCloudFade(cloudsOn ? cloudFade : 0);
+  }
+  applyClouds();
   const quality = new QualityGovernor(TIERS.length, (t) => {
-    tier = t; resize();
-    if (cloudMesh) cloudMesh.visible = TIERS[t].clouds;
+    tier = t; resize(); tiles?.setQuality(t);
+    applyClouds();
   }, { pinned: PIN_QUALITY, name: 'globe' });
 
   let lastHide = false, gridWas = false, labelsShown = true;
   let lastCamX = 0, lastCamY = 0, lastCamZ = 0, lastQ = 0, lastQy = 0, lastQz = 0, lastQw = 1;
+  let lastUploads = 0;
   function frame(ts, dt) {
     const simMs = now();
+    const tNowMs = performance.now();
 
     // time-jump detection (scrubbing, go-live, rate flips)
     const expected = lastSim + getRate() * (ts - lastReal);
@@ -483,8 +525,14 @@ export async function init() {
     }
     const dist = camera.position.length();
     if (!riding) {
-      controls.rotateSpeed = 0.18 + 0.62 * clamp((dist - 1.12) / 2.6, 0, 1);
+      // close to the ground everything is proportional to the altitude: slower drag, finer wheel steps, a nearer near plane
+      controls.rotateSpeed = dist >= MIN_DIST_BASE ? 0.18 + 0.62 * clamp((dist - MIN_DIST_BASE) / 2.6, 0, 1) : Math.max(0.012, 0.18 * (dist - 1) / (MIN_DIST_BASE - 1));
+      controls.zoomSpeed = dist < 2.2 ? 0.7 * clamp(Math.log(1 - 0.12 * (dist - 1) / dist) / Math.log(0.965), 0.2, 1) : 0.7;
       controls.update();
+      if (!ride.active) {
+        const nr = clamp((dist - 1) * 0.4, 0.002, 0.02);
+        if (Math.abs(camera.near - nr) > 1e-7) { camera.near = nr; camera.updateProjectionMatrix(); }
+      }
     }
     const cp = camera.position, cq = camera.quaternion;
     const moved = Math.abs(cp.x - lastCamX) + Math.abs(cp.y - lastCamY) + Math.abs(cp.z - lastCamZ) > 2e-5 * dist
@@ -521,6 +569,20 @@ export async function init() {
     camera.updateMatrixWorld();
     updateHover();
     updateLayers(simMs, dt * 1000);
+    // imagery tiles: select / stream / upload, then decide whether the base globe is still needed underneath
+    if (tiles) {
+      const tr = tiles.update(camera, dt, tNowMs);
+      earth.earth.visible = !tr.hideBase;
+      if (tr.visible !== creditOn) { creditOn = tr.visible; credit.classList.toggle('on', creditOn); }
+      if (tr.animating || tiles.state.uploads !== lastUploads) { lastUploads = tiles.state.uploads; loop.wake(160); }
+    }
+    {
+      const kRide = ride.active ? ride.k : 0;
+      const zoomFade = tiles && tiles.enabled ? 1 - 0.8 * sstep(1.55, 1.2, dist) : 1;
+      const f = zoomFade + (1 - zoomFade) * kRide;
+      if (Math.abs(f - cloudFade) > 0.002) { cloudFade = f; }
+      applyClouds();
+    }
     renderer.render(scene, camera);
 
     // labels: DOM writes are throttled to ~5 Hz while nothing moves
@@ -542,10 +604,12 @@ export async function init() {
     if (loop.running || isHidden()) return;
     lastSim = now(); lastReal = performance.now(); needSnap = true; quality.reset();
     offTick = onTick(handleTick);
+    tiles?.resume();
     loop.start();
   }
   function stop() {
     loop.stop();
+    tiles?.suspend();
     if (offTick) { offTick(); offTick = null; }
   }
   let hideTimer = 0;
@@ -563,7 +627,7 @@ export async function init() {
   maybeIntro();
 
   // handy for tests / debugging
-  window.__globe = { ride, THREE, scene, camera, controls, sats, path, renderer, flyTo, api, earth, loop, get fly() { return fly; }, get tier() { return tier; }, quality, obsDir };
+  window.__globe = { tiles, ride, THREE, scene, camera, controls, sats, path, renderer, flyTo, api, earth, loop, get fly() { return fly; }, get tier() { return tier; }, quality, obsDir };
 }
 
 function el(tag, cls, parent) {
