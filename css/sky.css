@@ -9,6 +9,10 @@
   text-shadow: 0 1px 8px rgba(0, 0, 0, 0.7);
 }
 
+.sky-header-main, .sky-header-aur { display: block; overflow: hidden; text-overflow: ellipsis; }
+.sky-header-aur { margin-top: 3px; color: #7ff0b4; opacity: 0.95; letter-spacing: 0.06em; }
+.sky-header-aur[hidden] { display: none; }
+
 .sky-controls {
   position: absolute; left: 50%; bottom: 88px; transform: translateX(-50%);
   display: flex; flex-wrap: wrap; gap: 4px; padding: 5px; justify-content: center;

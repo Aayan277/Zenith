@@ -7,6 +7,7 @@ import { D2R, R2D, makeFrame, computeBodies, applyM, enuToAltAz, altAzToEnu, lim
 import { loadSkyData, makeStarSprites, makeGlowSprite, bvBucket, BV_BUCKETS, MW_W, MW_H } from './data.js';
 import { initSats, setActive as setSatsActive, setObserver, getFrame as getSatFrame, satPosition, skyTrack, tickSeq, CAT_KEYS } from './sats.js';
 import { registerProviders, fmtTime } from './details.js';
+import { initAurora, updateAurora, prepareAuroraLayer, drawAurora, auroraAt, auroraState, auroraHeadline, auroraDetail } from './aurora.js';
 import { fmtLocal, tzLabel } from '../util/time.js';
 import { createLoop, onVisibility, isHidden, reducedMotion, idle, QualityGovernor } from '../util/governor.js';
 
@@ -17,7 +18,7 @@ const FONT = "'Space Grotesk', system-ui, sans-serif";
 const PREF_KEY = 'skywatch:sky';
 
 // ---- module state -----------------------------------------------------------
-let root, canvas, ctx, tip, headerEl, controlsEl;
+let root, canvas, ctx, tip, headerEl, headerAurEl, controlsEl;
 let W = 0, H = 0, dpr = 1;
 let data = null, sprites = null, sunGlow = null, moonGlow = null, glowSprites = {};
 let active = false, lastTs = 0;
@@ -34,7 +35,7 @@ const invalidate = () => { skyKey = ''; backKey = ''; frontKey = ''; };
 let F = null;                       // frame matrices
 let bodies = [], bodiesOrder = [], bodiesTime = -1e15, bodiesLoc = '', filtVer = 0;
 let sunAlt = -30, lim = 6.5;
-const opts = { lines: true, labels: true, mw: true, grid: false, sats: true };
+const opts = { lines: true, labels: true, mw: true, grid: false, sats: true, aurora: true };
 const cam = { alt: 90, az: 180, zoom: 1 };
 let zoomT = 1, zoomAnchor = null, tween = null;
 let velPan = { x: 0, y: 0 }, velAz = 0, dragging = false;
@@ -60,7 +61,7 @@ export async function init() {
   loadPrefs();
   buildDom();
   setObserver(state.get('location'));
-  registerProviders({ data: () => data, frameAt: ms => (F && Math.abs(F.time - ms) < 1500 ? F : makeFrame(ms, state.get('location'))) });
+  registerProviders({ aurora: (ms) => auroraDetail(state.get('location'), ms), data: () => data, frameAt: ms => (F && Math.abs(F.time - ms) < 1500 ? F : makeFrame(ms, state.get('location'))) });
   loop = createLoop(loopFrame, { interval: idleInterval });
   qGov = new QualityGovernor(QTIERS.length, (t) => { qTier = t; resize(); }, { pinned: PIN_QUALITY, name: 'sky' });
   wire();
@@ -69,6 +70,7 @@ export async function init() {
   onVisibility((hidden) => { if (hidden) halt(); else if (active) resume(); });
   // Star data / Milky Way / sprites are parsed off the critical path: right away when the sky is the first view,
   // otherwise when the browser is idle.
+  initAurora(() => { loop && loop.wake(300); });
   const boot = async () => { await loadData(); await initSats(); setActive(state.get('view') === 'sky', true); };
   if (state.get('view') === 'sky') await boot();
   else idle(() => { boot().catch(e => console.error('[sky] boot', e)); }, 2500);
@@ -94,13 +96,14 @@ function savePrefs() { try { localStorage.setItem(PREF_KEY, JSON.stringify(opts)
 function buildDom() {
   root.innerHTML = `
     <canvas class="sky-canvas" aria-label="Sky dome showing stars, planets and satellites above you"></canvas>
-    <div class="sky-header" aria-live="off"></div>
+    <div class="sky-header" aria-live="off"><span class="sky-header-main"></span><span class="sky-header-aur" hidden></span></div>
     <div class="sky-controls glass" role="toolbar" aria-label="Sky layers">
       <button class="sky-btn" data-opt="lines" title="Constellation lines">Lines</button>
       <button class="sky-btn" data-opt="labels" title="Constellation and star names">Names</button>
       <button class="sky-btn" data-opt="mw" title="Milky Way">Milky Way</button>
       <button class="sky-btn" data-opt="grid" title="Altitude/azimuth grid, ecliptic and celestial equator">Grid</button>
       <button class="sky-btn" data-opt="sats" title="Satellites">Satellites</button>
+      <button class="sky-btn" data-opt="aurora" title="Aurora (NOAA OVATION nowcast / Kp forecast)">Aurora</button>
       <button class="sky-btn sky-orient" data-act="orient" title="Aim the view with your phone" hidden>Phone</button>
       <button class="sky-btn sky-reset" data-act="reset" title="Reset view (double-click)" hidden>Reset</button>
     </div>
@@ -113,7 +116,8 @@ function buildDom() {
   canvas = root.querySelector('canvas');
   ctx = canvas.getContext('2d');
   tip = root.querySelector('.sky-tip');
-  headerEl = root.querySelector('.sky-header');
+  headerEl = root.querySelector('.sky-header-main');
+  headerAurEl = root.querySelector('.sky-header-aur');
   controlsEl = root.querySelector('.sky-controls');
   const hint = root.querySelector('.sky-hint');
   let seen = false; try { seen = localStorage.getItem('skywatch:sky:hint') === '1'; } catch {}
@@ -185,7 +189,7 @@ function refreshUi() {
   uiAt = performance.now();
   const mobile = W <= 760;
   let top = 100, bottom = H - 16;
-  const tb = visibleRect('#topbar'); if (tb) top = Math.max(top, tb.bottom + 36);
+  const tb = visibleRect('#topbar'); if (tb) top = Math.max(top, tb.bottom + 36 + (headerAurEl && !headerAurEl.hidden && !mobile ? 14 : 0));
   const ctl = controlsEl.getBoundingClientRect();
   const hintEl = root.querySelector('.sky-hint');
   const hintH = mobile && hintEl && !hintEl.hidden ? hintEl.offsetHeight + 8 : 0;
@@ -276,6 +280,7 @@ function stepCamera(dt, now) {
   }
 }
 
+const auroraCam = { key: '', W: 0, H: 0, cx: 0, cy: 0, S: 1, r: [0, 0, 0], u: [0, 0, 0], f: [0, 0, 0] };
 // ---- main loop ----------------------------------------------------------------
 // Full rate while the camera moves / the user interacts / the sim runs fast; ~20-30 fps when still.
 function isBusy() {
@@ -312,6 +317,7 @@ function frame(ts, dt) {
     bodiesOrder = bodies.filter(b => b.name !== 'Sun' && b.name !== 'Moon').concat(bodies.filter(b => b.name === 'Moon'), bodies.filter(b => b.name === 'Sun'));
     for (const b of bodies) if (!b.rgb) b.rgb = hexToRgb(b.color);
   }
+  const aSt = updateAurora(loc, simNow, sunAlt, opts.aurora);
   // camera -> equatorial matrix
   const M = F.M;
   C[0] = r0 * M[0] + r1 * M[3] + r2 * M[6]; C[1] = r0 * M[1] + r1 * M[4] + r2 * M[7]; C[2] = r0 * M[2] + r1 * M[5] + r2 * M[8];
@@ -348,6 +354,15 @@ function frame(ts, dt) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
+  if (aSt.vis) {
+    // Additive glow over the cached sky + stars (addition commutes, so stars stay visible "through" it);
+    // ground and labels come later in the front layer.
+    auroraCam.key = `${cam.alt.toFixed(3)}|${cam.az.toFixed(3)}|${cam.zoom.toFixed(4)}|${W}|${H}|${cx.toFixed(1)}|${cy.toFixed(1)}`;
+    auroraCam.W = W; auroraCam.H = H; auroraCam.cx = cx; auroraCam.cy = cy; auroraCam.S = S;
+    auroraCam.r[0] = r0; auroraCam.r[1] = r1; auroraCam.r[2] = r2; auroraCam.u[0] = u0; auroraCam.u[1] = u1; auroraCam.u[2] = u2;
+    auroraCam.f[0] = f0; auroraCam.f[1] = f1; auroraCam.f[2] = f2;
+    if (prepareAuroraLayer(auroraCam, camBusy ? 8 : (compact() ? 4 : 3), camBusy)) drawAurora(ctx, W, H, ts, reducedMotion());
+  }
   drawTwinkle(ts);
   drawBodies(ts, simNow);
   if (opts.sats) drawSats(ts, simNow); else satPick.n = 0;
@@ -994,6 +1009,7 @@ function drawCompass() {
 
 // ---- selection & hover ------------------------------------------------------------
 function objectEnu(kind, id, simNow) {
+  if (kind === 'body' && id === 'Aurora') { const a = auroraState(); return a.vis ? altAzToEnu(Math.max(a.dirEl, 8), a.dirAz) : null; }
   if (kind === 'body') { const b = bodies.find(x => x.name === id); return b ? [b.e, b.n, b.u] : null; }
   if (kind === 'star') { const i = data.stars.byHip.get(id); if (i === undefined) return null; return applyM(F.M, data.stars.vec[i * 3], data.stars.vec[i * 3 + 1], data.stars.vec[i * 3 + 2]); }
   if (kind === 'constellation') { const c = data.consById.get(id); return c ? applyM(F.M, c.label[0], c.label[1], c.label[2]) : null; }
@@ -1050,6 +1066,11 @@ function pick(px, py) {
       const c = conLabelPos[q], x = conLabelPos[q + 1], y = conLabelPos[q + 2];
       if (Math.abs(x - px) < c.name.length * 4.2 && Math.abs(y - py) < 9) { best = { kind: 'constellation', id: c.id, x, y, label: c.name }; break; }
     }
+  }
+  if (!best && opts.aurora && auroraState().vis) {
+    const v = unproj(px, py, [0, 0, 0]);
+    const a = v[2] > 0 ? auroraAt(v[0], v[1], v[2]) : null;
+    if (a) best = { kind: 'body', id: 'Aurora', x: px, y: py, label: 'Aurora', aurora: a };
   }
   return best;
 }
@@ -1136,7 +1157,8 @@ function onHover(x, y, e) {
   canvas.style.cursor = hit ? 'pointer' : '';
   if (!hit) { hideTip(); return; }
   let sub = '';
-  if (hit.kind === 'body' && hit.body) sub = `alt ${hit.body.alt.toFixed(0)}° · ${compass(hit.body.az)}` + (hit.id !== 'Sun' && hit.id !== 'Moon' ? ` · mag ${hit.body.mag.toFixed(1)}` : '');
+  if (hit.aurora) sub = hit.aurora.source === 'ovation' ? `${hit.aurora.pct}% chance (NOAA OVATION)` : `~${hit.aurora.pct}% chance (estimated from Kp forecast)`;
+  else if (hit.kind === 'body' && hit.body) sub = `alt ${hit.body.alt.toFixed(0)}° · ${compass(hit.body.az)}` + (hit.id !== 'Sun' && hit.id !== 'Moon' ? ` · mag ${hit.body.mag.toFixed(1)}` : '');
   else if (hit.kind === 'star') sub = `magnitude ${hit.mag.toFixed(1)}`;
   else if (hit.kind === 'sat') sub = `alt ${hit.el.toFixed(0)}° · ${Math.round(hit.range).toLocaleString()} km`;
   else sub = 'constellation';
@@ -1185,6 +1207,9 @@ function updateHeader(simNow, loc) {
   const place = (loc.name || 'Unknown location').split(',')[0];
   const txt = `Your sky · ${place} · ${fmtLocal(simNow, { hour: 'numeric', minute: '2-digit' }, loc)} ${tzLabel(simNow, loc)} · ${twilightName(sunAlt)}`;
   if (headerEl.textContent !== txt) headerEl.textContent = txt;
+  const al = opts.aurora ? auroraHeadline() : '';
+  if (headerAurEl.textContent !== al) headerAurEl.textContent = al;
+  headerAurEl.hidden = !al;
 }
 
 // ---- device orientation ("point phone") -------------------------------------------------------

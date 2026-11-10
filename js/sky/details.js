@@ -35,6 +35,7 @@ export function registerProviders(ctx) {
 
   // ---- bodies ----
   state.registerDetailProvider('body', (sel, nowMs) => {
+    if (sel.id === 'Aurora') return ctx.aurora ? ctx.aurora(nowMs) : null;
     if (!A()) return null;
     const loc = state.get('location');
     const frame = ctx.frameAt(nowMs);

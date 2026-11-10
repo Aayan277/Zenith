@@ -54,6 +54,7 @@ const PRECACHE = [
  "js/launches/util.js",
  "js/main.js",
  "js/sky/astro.js",
+ "js/sky/aurora.js",
  "js/sky/data.js",
  "js/sky/details.js",
  "js/sky/sats.js",
