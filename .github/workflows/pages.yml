@@ -36,7 +36,7 @@ jobs:
         run: |
           mkdir -p _site/data/sky
           cp -r index.html sw.js css js assets _site/
-          cp data/sats.json data/sats-core.json data/launches.json _site/data/
+          cp data/sats.json data/sats-core.json data/launches.json data/spacecraft.json _site/data/
           cp data/sky/sky.json data/sky/constellations.json _site/data/sky/
           touch _site/.nojekyll
       - name: Fetch fresh satellite data
@@ -47,6 +47,9 @@ jobs:
       - name: Fetch fresh launch schedule
         continue-on-error: true
         run: node scripts/fetch-launches.mjs --out _site/data/launches.json
+      - name: Fetch fresh spacecraft positions (JPL Horizons)
+        continue-on-error: true
+        run: node scripts/fetch-spacecraft.mjs --out _site/data/spacecraft.json
       - name: Minify JS and CSS (per file, module structure unchanged)
         run: |
           cd _site

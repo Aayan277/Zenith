@@ -531,7 +531,7 @@ export async function init() {
     if (e.kind === 'craft') {
       const far = e.far;
       const dist = far ? lerp(46, 28, mm) : lerp(6, 0.06, mm);
-      if (far) dir.copy(radial).multiplyScalar(0.85).addScaledVector(UP, 0.1).addScaledVector(tang, 0.45);
+      if (far) dir.copy(radial).multiplyScalar(0.9).addScaledVector(UP, 0.12).addScaledVector(tang, 0.28);
       else dir.copy(radial).multiplyScalar(-0.4).addScaledVector(UP, 0.3).addScaledVector(tang, 0.85);
       return { dist, dir: dir.normalize() };
     }
@@ -723,7 +723,7 @@ export async function init() {
     }
     if (b.dataset.act === 'home') { state.set('selection', null); follow = null; flyTo(homeEnt, 1.8); }
     if (b.dataset.act === 'lapse') {
-      const r = getRate(), cur = TIMELAPSE.findIndex(t => t.r && Math.abs(Math.abs(r) - t.r) < 1), next = (cur + 1) % TIMELAPSE.length;
+      const r = getRate(), cur = Math.max(0, TIMELAPSE.findIndex(t => t.r && Math.abs(Math.abs(r) - t.r) < 1)), next = (cur + 1) % TIMELAPSE.length;
       setRate(TIMELAPSE[next].r || 1); lapseSet = next > 0; needSnapTime();
     }
   });

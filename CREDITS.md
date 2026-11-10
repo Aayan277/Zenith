@@ -10,14 +10,15 @@ Zenith stands on the shoulders of these projects and data providers.
 | [astronomy-engine](https://github.com/cosinekitty/astronomy) | Sun, Moon, planets, rise/set, moon phase | MIT |
 | [three.js](https://threejs.org) | 3D globe rendering | MIT |
 | [d3-celestial](https://github.com/ofrohn/d3-celestial) | Star, constellation and Milky Way data | BSD-3-Clause |
-| [Solar System Scope](https://www.solarsystemscope.com/textures/) | Earth and Milky Way textures | CC BY 4.0 (attribution required) |
+| [Solar System Scope](https://www.solarsystemscope.com/textures/) | Earth, Milky Way, Sun, planet, Saturn ring and Moon textures | CC BY 4.0 (attribution required) |
+| [JPL Horizons](https://ssd.jpl.nasa.gov/horizons/) (NASA/JPL Solar System Dynamics) | Spacecraft ephemerides for the System view (`data/spacecraft.json`, built by `scripts/fetch-spacecraft.mjs`) | US Government public domain; please be polite with requests |
 | [Open-Meteo](https://open-meteo.com) | Cloud cover forecasts | CC BY 4.0 (attribution required) |
 | [NASA Image and Video Library](https://images.nasa.gov) | Telescope photo gallery (Hubble, Webb, Chandra …); credits are shown with each image | NASA imagery is generally public domain; some images carry ESA/STScI/other credits shown in the viewer |
 | [NOAA SWPC](https://www.swpc.noaa.gov) | Space weather / aurora data | US Government public domain |
 | [BigDataCloud](https://www.bigdatacloud.com) | Reverse geocoding of your location | Free client-side API, attribution appreciated |
 | [Space Grotesk](https://fonts.google.com/specimen/Space+Grotesk), [JetBrains Mono](https://fonts.google.com/specimen/JetBrains+Mono) | Typography | SIL OFL 1.1 |
 
-Textures: "Earth" and "Milky Way" maps by Solar System Scope, licensed under
+Textures: "Earth", "Milky Way", "Sun", "Mercury", "Venus", "Mars", "Jupiter", "Saturn" (with ring), "Uranus", "Neptune" and "Moon" maps by Solar System Scope (converted to WebP, downsized to 1024 px wide in `assets/textures/system/`), licensed under
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 
 Weather data by [Open-Meteo.com](https://open-meteo.com/), licensed under
