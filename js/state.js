@@ -17,7 +17,7 @@ export const CATEGORIES = {
 const listeners = new Map(); // key -> Set<fn>
 
 const state = {
-  view: 'globe',            // 'globe' | 'sky'
+  view: 'globe',            // 'globe' | 'sky' | 'system'
   // Observer location. `source`: 'gps' | 'search' | 'default'
   location: { lat: 51.4779, lon: -0.0015, elevM: 0, name: 'Greenwich, UK', source: 'default' },
   // Currently selected object or null.

@@ -65,7 +65,8 @@ body[data-earth="ready"] .globe-canvas { opacity: 1; }
 #views, .view { position: fixed; inset: 0; }
 .view { opacity: 0; pointer-events: none; transition: opacity 0.5s ease; }
 body[data-view="globe"] #view-globe,
-body[data-view="sky"] #view-sky { opacity: 1; pointer-events: auto; }
+body[data-view="sky"] #view-sky,
+body[data-view="system"] #view-system { opacity: 1; pointer-events: auto; }
 
 /* Reusable glass surface */
 .glass {

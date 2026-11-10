@@ -31,6 +31,7 @@ export async function init() {
       <span class="seg-hi" aria-hidden="true"></span>
       <button role="tab" data-view="globe" aria-selected="true">Orbit</button>
       <button role="tab" data-view="sky" aria-selected="false">Sky</button>
+      <button role="tab" data-view="system" aria-selected="false">System</button>
     </div>
     <div class="tb-right">
       <button class="tb-btn glass tb-search" id="btn-search">

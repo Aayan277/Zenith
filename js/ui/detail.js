@@ -81,13 +81,14 @@ function render() {
   if (!d) { renderLoading(); return; }
   const stats = (d.stats || []).slice(0, 6), rows = d.rows || [], actions = d.actions || [];
   const icon = d.icon || defaultIcon(sel);
-  const k = JSON.stringify([sel.kind, sel.id, d.title, d.subtitle, d.color, icon, stats.map(s => [s.label, s.unit]), rows.map(r => r.label), !!d.note, actions.map(a => a.label)]);
+  const k = JSON.stringify([sel.kind, sel.id, d.title, d.subtitle, d.color, icon, stats.map(s => [s.label, s.unit]), rows.map(r => r.label), !!d.note, actions.map(a => a.label), d.media?.src || '']);
   latestActions = actions;
   if (k !== sig) {
     sig = k;
     panel.style.setProperty('--dp-accent', d.color || 'var(--accent)');
     card.innerHTML = header({ ...d, icon }) + `
       <div class="dp-body scroll">
+        ${d.media?.src ? `<figure class="dp-media">${d.media.href ? `<a href="${esc(d.media.href)}" target="_blank" rel="noopener">` : ''}<img src="${esc(d.media.src)}" alt="${esc(d.media.alt || '')}" loading="lazy" decoding="async">${d.media.href ? '</a>' : ''}${d.media.caption ? `<figcaption>${esc(d.media.caption)}</figcaption>` : ''}</figure>` : ''}
         ${stats.length ? `<div class="dp-stats" data-n="${stats.length}">${stats.map(s => `
           <div class="dp-stat"><span class="dp-stat-label eyebrow">${esc(s.label)}</span>
             <span class="dp-stat-line"><span class="dp-val mono"></span>${s.unit ? `<span class="dp-unit">${esc(s.unit)}</span>` : ''}</span></div>`).join('')}</div>` : ''}

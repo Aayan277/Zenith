@@ -36,6 +36,11 @@ function hasWebGL() {
 
 // Sky view: init on first need (view switch, selection, focus request) or when the browser is idle.
 let skyPromise = null;
+// Solar System view: three.js scene, initialised only when the user opens it.
+let systemPromise = null;
+function ensureSystem() {
+  return (systemPromise ||= safeInit('system', () => import('./system/system.js')));
+}
 function ensureSky() {
   return (skyPromise ||= safeInit('sky', () => import('./sky/sky.js')));
 }
@@ -62,7 +67,8 @@ function ensureSky() {
     console.warn('[globe] WebGL unavailable; use the Sky view');
   }
 
-  state.on('view', v => { if (v === 'sky') ensureSky(); });
+  state.on('view', v => { if (v === 'sky') ensureSky(); if (v === 'system') ensureSystem(); });
+  if (state.get('view') === 'system') ensureSystem();
   state.on('selection', s => { if (s && s.kind !== 'sat') ensureSky(); });
   state.on('focus', () => ensureSky());
   if (state.get('view') === 'sky') ensureSky(); else idle(ensureSky, 4000);
