@@ -30,6 +30,15 @@ function moonPhaseName(angle) {
   return 'Waning Crescent';
 }
 
+// --- SUN (js/sun/): the live Sun module is loaded lazily the first time the Sun is selected, then merges into this provider's output.
+let sunMod = null, sunLoading = false;
+function mergeSun(base, nowMs) {
+  if (sunMod) return sunMod.mergeSunDetail(base, nowMs);
+  if (!sunLoading) { sunLoading = true; import('../sun/index.js').then(m => { sunMod = m; }).catch(e => { sunLoading = false; console.error('[sun]', e); }); }
+  return base;
+}
+// --- /SUN
+
 export function registerProviders(ctx) {
   const A = () => window.Astronomy;
 
@@ -75,8 +84,9 @@ export function registerProviders(ctx) {
     rows.push({ label: 'Highest', value: fmtTime(rts.transit, nowMs) + (rts.transitAlt != null ? ` · ${f1(rts.transitAlt, 0)}°` : '') });
     rows.push({ label: 'Sets', value: fmtTime(rts.set, nowMs) });
     rows.push({ label: 'Constellation', value: con });
-    return { title: sel.id, subtitle, color: BODY_COLORS[sel.id], icon, stats, rows, note,
+    const out = { title: sel.id, subtitle, color: BODY_COLORS[sel.id], icon, stats, rows, note,
       actions: [{ label: 'Center in sky', onClick: () => state.emit('focus', { kind: 'body', id: sel.id }) }] };
+    return sel.id === 'Sun' ? mergeSun(out, nowMs) : out; // SUN: merge live solar data
   });
 
   // ---- stars ----

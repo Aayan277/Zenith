@@ -11,6 +11,7 @@ import { bodyAlt } from '../tonight/astro.js';
 import { fmtLocal, tzLabel } from '../util/time.js';
 import { esc, skeleton, fmtTime } from '../tonight/util.js';
 import { notifyPermission, askPermission } from '../ui/notify.js';
+import { sunCardHtml, adoptSunThumb, warmSunCard, onSun, onSunCardReady, openSunDashboard } from '../sun/card.js'; // SUN: "Sun now" card
 
 let el, shown = false, timer = 0, sig = '', pendingRender = 0;
 const H = 3600e3;
@@ -163,14 +164,14 @@ function render() {
     if (!aur.kp && !aur.ovation && !aur.errors.kp && !aur.errors.ovation) h = `<section class="tn-card">${head('Aurora')}${skeleton(4)}</section><section class="tn-card">${skeleton(3)}</section>`;
     else {
       const a = assessNow(aur, loc, now);
-      h = heroCard(a, now) + kpCard(now) + forecastCard(now, loc) + alertsCard(now) + alertMeCard() +
+      h = heroCard(a, now) + sunCardHtml() + kpCard(now) + forecastCard(now, loc) + alertsCard(now) + alertMeCard() +
         `<p class="tn-foot">Data: NOAA Space Weather Prediction Center${aur.updatedAt ? ` · updated ${ago(aur.updatedAt)}` : ''}${aur.ovation ? `<br>Aurora map: OVATION, forecast for ${fmtTime(aur.ovation.forecast)} ${tzLabel(aur.ovation.forecast)}` : ''}</p>`;
     }
   } catch (e) { console.error('[aurora panel]', e); h = `<section class="tn-card">${ERR('Something went wrong showing aurora data.')}</section>`; }
   if (h === sig) return;
   sig = h;
   const active = document.activeElement, fid = el.contains(active) ? (active.dataset.act || active.dataset.preset) : null, top = el.scrollTop;
-  el.innerHTML = h; el.scrollTop = top;
+  el.innerHTML = h; el.scrollTop = top; adoptSunThumb(el); // SUN
   if (fid) el.querySelector(`[data-act="${CSS.escape(fid)}"],[data-preset="${CSS.escape(fid)}"]`)?.focus({ preventScroll: true });
 }
 const later = () => { clearTimeout(pendingRender); pendingRender = setTimeout(() => shown && render(), 250); };
@@ -185,15 +186,16 @@ export function mount(pane) {
     else if (act === 'alerts') { await enableAlerts(!getPrefs().on); if (getPrefs().preset === 'local') loadOvation(); }
     else if (act === 'perm') { await askPermission(); }
     else if (act === 'retry-ova') loadOvation({ force: true });
+    else if (act === 'sun') openSunDashboard(); // SUN
     sig = ''; render();
   });
-  onAurora(later);
+  onAurora(later); onSun(later); onSunCardReady(later); // SUN
   for (const k of ['location', 'clock', 'aurora:globe', 'aurora:alerts']) state.on(k, later);
   render();
 }
 export function onShow() {
   shown = true; render();
-  loadSmall(); loadOvation();
+  loadSmall(); loadOvation(); warmSunCard(); // SUN
   clearInterval(timer); timer = setInterval(() => { sig = ''; render(); }, 30000);
 }
 export function onHide() { shown = false; clearInterval(timer); timer = 0; }

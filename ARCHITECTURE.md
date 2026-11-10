@@ -84,6 +84,9 @@ must not break the others. Do NOT import from `main.js` (circular). To show a to
 | `body` | `'Sun'`, `'Moon'`, `'Mercury'`…`'Neptune'` | sky |
 | `star` | HIP number | sky |
 | `constellation` | IAU abbrev e.g. `'Ori'` | sky |
+| `craft` | spacecraft key e.g. `'jwst'` | system |
+| `world` | `'Earth'`, `'Pluto'` (heliocentric info) | system |
+| `launch` | Launch Library id | launches |
 
 ## Globe plug-ins
 

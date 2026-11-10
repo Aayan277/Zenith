@@ -50,6 +50,10 @@ const offsetMin = () => (now() - Date.now()) / 60000;
 function fmtOffset(m) {
   const a = Math.abs(m);
   if (a < 1) return 'now';
+  const sign = m < 0 ? '−' : '+';
+  // Far jumps (System view: ±1 month / year) read better in days or years.
+  if (a >= 365 * 1440) return sign + (a / (365.25 * 1440)).toFixed(a >= 3650 * 1440 ? 0 : 1) + ' yr';
+  if (a >= 3 * 1440) return sign + Math.round(a / 1440) + ' days';
   const h = Math.floor(a / 60), mm = Math.round(a % 60);
   return (m < 0 ? '−' : '+') + (h ? h + 'h ' : '') + (mm || !h ? p2(mm) + 'm' : '').trim();
 }

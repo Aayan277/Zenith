@@ -1,0 +1,55 @@
+/* System view (Solar System). Tokens from base.css only. */
+#view-system { background: #02040a; overflow: hidden; }
+.sys-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; outline: none; }
+.sys-vignette { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse at 50% 50%, transparent 58%, rgba(2, 4, 10, .5) 100%); }
+.sys-fallback { position: absolute; inset: 0; display: grid; place-content: center; padding: 24px; text-align: center; color: var(--text-dim); max-width: 420px; margin: auto; }
+.sys-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.sys-label, .sys-tip { position: absolute; left: 0; top: 0; pointer-events: none; white-space: nowrap; opacity: 0; will-change: transform; }
+.sys-label {
+  font-family: var(--mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; line-height: 16px;
+  color: var(--text); text-shadow: 0 0 6px rgba(0,0,0,.95), 0 0 2px rgba(0,0,0,.95); transition: opacity .18s; z-index: 4;
+}
+.sys-label.sun { color: #ffd9a0; }
+.sys-label.dim { color: var(--text-dim); font-size: 10px; }
+.sys-label.craft { color: var(--c, var(--accent)); font-size: 10px; letter-spacing: .1em; }
+.sys-label.grid { color: var(--text-faint); font-size: 9.5px; letter-spacing: .1em; opacity: 0; }
+.sys-label.sel { color: var(--accent); }
+.sys-tip {
+  display: flex; align-items: center; gap: 8px; padding: 6px 11px; border-radius: 999px; z-index: 5;
+  background: var(--glass-strong); border: 1px solid var(--glass-border-hi); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  font-size: 12px; box-shadow: var(--shadow); transition: opacity .12s;
+}
+.sys-tip i { width: 8px; height: 8px; border-radius: 50%; flex: none; box-shadow: 0 0 8px currentColor; }
+.sys-tip b { font-weight: 600; letter-spacing: .01em; }
+.sys-tip span { color: var(--text-dim); font-size: 11px; }
+
+/* Control + legend card: centred between the left panel (340) and the detail panel (340), above the time bar. */
+.sys-card {
+  position: absolute; left: 50%; bottom: calc(var(--timebar-h) + 28px); transform: translateX(-50%); z-index: 6;
+  width: min(560px, calc(100vw - 2 * (var(--panel-w) + var(--gutter) * 2) )); min-width: 440px; padding: 10px 12px 9px; display: grid; gap: 8px;
+}
+.sys-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.sys-seg, .sys-jump { display: inline-flex; gap: 2px; padding: 3px; border-radius: 999px; background: rgba(8, 12, 24, .55); border: 1px solid var(--glass-border); }
+.sys-seg button, .sys-jump button, .sys-chip {
+  border: 0; border-radius: 999px; background: transparent; color: var(--text-dim); cursor: pointer; font-size: 12px; padding: 6px 12px;
+  transition: background .2s, color .2s; white-space: nowrap; font-family: var(--font);
+}
+.sys-jump button { padding: 6px 10px; font-family: var(--mono); font-size: 11.5px; }
+.sys-seg button:hover, .sys-jump button:hover, .sys-chip:hover { background: rgba(92, 225, 255, .10); color: var(--text); }
+.sys-seg button.on { background: var(--accent); color: #04121a; font-weight: 600; }
+.sys-jump button.today { color: var(--accent); }
+.sys-chip { border: 1px solid var(--glass-border); padding: 6px 11px; }
+.sys-chip b { font-weight: 500; color: var(--text); margin-left: 3px; font-family: var(--mono); font-size: 11px; }
+.sys-chip.on { color: var(--accent); border-color: var(--glass-border-hi); background: rgba(92, 225, 255, .1); }
+.sys-date { font-size: 13px; color: var(--text); letter-spacing: .02em; padding-right: 6px; }
+.sys-fact { display: flex; align-items: center; gap: 9px; font-size: 13px; color: var(--text); }
+.sys-fact i { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--sun); box-shadow: 0 0 10px var(--sun); }
+.sys-note { font-size: 11px; color: var(--text-faint); line-height: 1.35; }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (max-width: 1100px) { .sys-card { width: min(560px, calc(100vw - 2 * var(--gutter))); } }
+@media (max-width: 760px) {
+  .sys-card { min-width: 0; bottom: calc(var(--timebar-h) + var(--gutter) + 8px); padding: 8px; }
+  .sys-row { flex-wrap: wrap; }
+  .sys-chip { display: none; }
+  .sys-jump button { padding: 6px 7px; }
+}

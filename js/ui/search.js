@@ -81,6 +81,16 @@ function loadExtra() {
       await m.loadLaunches();
       out.push(...m.searchEntries(norm));
     } catch {}
+    // Telescope photo galleries ("hubble photos", "telescopes")
+    try {
+      const { TELESCOPES } = await import('../gallery/telescopes.js');
+      const k0 = norm('browse telescope photos telescopes gallery images pictures');
+      out.push({ kind: 'gallery', id: 'all', name: 'Browse telescope photos', sub: 'NASA image library · Hubble, Webb, Chandra…', color: '#5ce1ff', key: k0, compact: k0.replace(/ /g, ''), bonus: 60 });
+      for (const t of TELESCOPES) {
+        const k = norm(`${t.short} photos ${t.name} pictures images gallery`);
+        out.push({ kind: 'gallery', id: t.key, name: `${t.short} photos`, sub: `Gallery · ${t.name}`, color: t.accent, key: k, compact: k.replace(/ /g, ''), bonus: 20 });
+      }
+    } catch {}
     extra = out; builtFor = -1;
     if (open) update();
   })();
@@ -182,6 +192,7 @@ function setActive(i, scroll = true) {
 
 function choose(i) {
   const it = results[i]; if (!it) return;
+  if (it.kind === 'gallery') { closeSearch(false); import('../gallery/index.js').then(m => m.openGallery(it.id === 'all' ? 'hubble' : it.id)); return; }
   const sel = { kind: it.kind, id: it.id };
   if (it.kind === 'sat' && it.cat && state.get('filters')[it.cat] === false) state.patch('filters', { [it.cat]: true });
   closeSearch(false);
