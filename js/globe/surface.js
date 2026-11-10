@@ -55,7 +55,7 @@ export const GLSL_SURFACE = /* glsl */`
       vec3 r1 = cross(dpdy, N), r2 = cross(N, dpdx);
       float det = dot(dpdx, r1);
       vec3 grad = sign(det) * (dFdx(hgt) * r1 + dFdy(hgt) * r2);
-      Nb = normalize(abs(det) * N - 0.00045 * (0.25 + 0.75 * land) * grad * rideK * (0.35 + 0.65 * detail));
+      Nb = normalize(abs(det) * N - 0.00045 * (0.25 + 0.75 * land) * grad * rideK * detail);
       // sunlight colour at ground level: gold and red towards the terminator, white overhead
       vec3 sun0 = sunTransAt(N0 * 1.00001) / vec3(0.946, 0.879, 0.728);
       tint = mix(vec3(1.0), clamp(sun0, 0.0, 1.6), rideK);
@@ -69,7 +69,7 @@ export const GLSL_SURFACE = /* glsl */`
       if (ndl > 0.0) {
         float shp2;
         float cs = cloudDens(uCloud, uvs, rotY(normalize(N0 + Lt * off), -uCloudRot), fp, shp2);
-        cloudSh = cs * 0.36 * smoothstep(0.02, 0.2, ndl) * rideK * uCloudFade;
+        cloudSh = smoothstep(0.06, 0.45, cs) * 0.36 * smoothstep(0.02, 0.2, ndl) * rideK * uCloudFade;     // only under real cloud, never from the faint haze values of the coverage map
       }
     } else {
       cloud = texture2D(uCloud, uvc).r;

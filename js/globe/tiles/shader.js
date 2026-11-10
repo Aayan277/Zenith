@@ -78,7 +78,11 @@ export const TILE_FRAG = /* glsl */`
       night = mix(nprev, nc, uNightK);
     }
 
-    vec3 col = earthShade(day, night, wm, N, vUv, uvw, vW, fp, uDetail, uLights);
+    // procedural ride detail (noise albedo, relief bump) is only a fallback for blurry maps: it fades out as soon as one displayed
+    // texel is not much bigger than a screen pixel (real imagery already has the detail)
+    float texelPx = uTexelW / max(uXfDC.z, 1e-6) / max(fp, 1e-9);
+    float detail = uRide > 0.001 ? uDetail * smoothstep(0.9, 2.6, texelPx) : uDetail;
+    vec3 col = earthShade(day, night, wm, N, vUv, uvw, vW, fp, detail, uLights);
     // day-only overlays (no night imagery) dissolve into the GIBS layer underneath towards the dark side
     a *= uGlobal * mix(1.0, smoothstep(-0.10, 0.06, dot(N, normalize(uSun))), uDuskFade);
     // deep layer: its ocean pixels hand over to the GIBS ocean (one ocean tone everywhere, no layer seam over water)
