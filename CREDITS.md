@@ -12,6 +12,7 @@ Zenith stands on the shoulders of these projects and data providers.
 | [d3-celestial](https://github.com/ofrohn/d3-celestial) | Star, constellation and Milky Way data | BSD-3-Clause |
 | [Solar System Scope](https://www.solarsystemscope.com/textures/) | Earth and Milky Way textures | CC BY 4.0 (attribution required) |
 | [Open-Meteo](https://open-meteo.com) | Cloud cover forecasts | CC BY 4.0 (attribution required) |
+| [NASA Image and Video Library](https://images.nasa.gov) | Telescope photo gallery (Hubble, Webb, Chandra …); credits are shown with each image | NASA imagery is generally public domain; some images carry ESA/STScI/other credits shown in the viewer |
 | [NOAA SWPC](https://www.swpc.noaa.gov) | Space weather / aurora data | US Government public domain |
 | [BigDataCloud](https://www.bigdatacloud.com) | Reverse geocoding of your location | Free client-side API, attribution appreciated |
 | [Space Grotesk](https://fonts.google.com/specimen/Space+Grotesk), [JetBrains Mono](https://fonts.google.com/specimen/JetBrains+Mono) | Typography | SIL OFL 1.1 |

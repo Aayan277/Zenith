@@ -64,6 +64,7 @@ export function initLayers(bar) {
         <button class="ov-switch${ext.aurora ? ' on' : ''}" data-act="ov-aurora" role="switch" aria-checked="${!!ext.aurora}"><span class="ov-dot" style="--c:#5cffa8"></span>Aurora oval<span class="hl-track"><i></i></span></button>
         <button class="ov-switch${ext.launches ? ' on' : ''}" data-act="ov-launches" role="switch" aria-checked="${!!ext.launches}"><span class="ov-dot" style="--c:#ff9f5c"></span>Launch pads<span class="hl-track"><i></i></span></button>
       </div>
+      <button class="ov-switch ov-explore" data-act="gallery"><span class="ov-dot" style="--c:#e07bff"></span>Telescope photos<span class="ov-go">Hubble, Webb, Chandra… →</span></button>
       ${notable.length ? `<div class="pop-head hl-head"><span class="eyebrow">Notable</span></div>
       <div class="hl-chips">${notable.map(s => `<button class="hl-chip" data-id="${s.id}" title="${esc(s.name)}">${esc(s.notable)}</button>`).join('')}</div>` : ''}
       <div class="pop-head"><span class="eyebrow">Satellite layers</span>
@@ -91,6 +92,7 @@ export function initLayers(bar) {
       const sel = { kind: 'sat', id: +jump.dataset.id };
       state.set('selection', sel); state.emit('focus', sel);
     } else if (act && act.dataset.act === 'hl') state.set('highlightsOnly', !state.get('highlightsOnly'));
+    else if (act && act.dataset.act === 'gallery') { setOpen(false); import('../gallery/index.js').then(m => m.openGallery('hubble')); }
     else if (act && act.dataset.act.startsWith('ov-')) toggleOverlay(act.dataset.act.slice(3));
     else if (chip) state.patch('filters', { [chip.dataset.cat]: !state.get('filters')[chip.dataset.cat] });
     else if (act) {

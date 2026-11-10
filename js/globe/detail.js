@@ -3,6 +3,7 @@ import * as state from '../state.js';
 import { CATEGORIES, registerDetailProvider } from '../state.js';
 import { getSat, satrec } from '../data/catalog.js';
 import { sunSceneVec } from './coords.js';
+import { telescopeForNorad } from '../gallery/telescopes.js';   // GALLERY HOOK (js/gallery): registry only, the gallery UI is imported on click
 
 const MU = 398600.4418, RE = 6378.137;
 
@@ -72,7 +73,7 @@ export function registerSatDetail(api) {
     const following = api.isFollowing(sel.id);
 
     return {
-      title: sat.name,
+      title: sat.notable || sat.name,
       subtitle,
       color: cat.color,
       icon: 'sat',
@@ -92,6 +93,8 @@ export function registerSatDetail(api) {
       ],
       note: decayed ? 'This orbit can no longer be propagated (likely decayed or stale elements).' : undefined,
       actions: [
+        // GALLERY HOOK: telescopes get a "View its photos" action first (js/gallery/telescopes.js is the registry, keyed by NORAD id)
+        ...(telescopeForNorad(sel.id) ? [{ label: '📷 View its photos', onClick: () => import('../gallery/index.js').then(m => m.openGallery(telescopeForNorad(sel.id).key)).catch(e => { console.warn('[gallery]', e); state.emit('toast', 'Couldn’t open the photo gallery'); }) }] : []),
         { label: following ? 'Stop following' : 'Follow', onClick: () => api.toggleFollow(sel.id) },
         { label: 'Show in sky', onClick: () => { state.set('view', 'sky'); state.emit('focus', sel); } },
       ],
