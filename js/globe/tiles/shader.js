@@ -22,7 +22,7 @@ export const TILE_FRAG = /* glsl */`
   uniform float uDayK, uDayHasP;                    // cross-fade 0..1; 1 when a previous texture exists
   uniform float uNightK, uNightHas, uNightHasP;     // night: base map -> tile (or previous tile -> tile)
   uniform float uGlobal;                            // layer opacity (zoom fade)
-  uniform float uTilePx, uTexelW, uDetail, uLights, uDuskFade, uSeaFade, uBlueLo, uBlueHi, uPriorLod, uPriorK;
+  uniform float uTilePx, uTexelW, uDetail, uLights, uDuskFade, uSeaFade, uBlueLo, uBlueHi, uPriorLod, uPriorK, uBrLo, uBrHi, uSeaMax, uSeaMin;
   uniform vec3 uGamma, uGain, uOcean;
   uniform float uSat, uOceanRef;
   uniform float uTexel, uPxK, uFeather;
@@ -60,15 +60,16 @@ export const TILE_FRAG = /* glsl */`
     // modulated by the tile's own shading (bathymetry, shallows); land is graded to the base texture's look.
     vec3 s = pow(max(c, vec3(0.0)), vec3(1.0 / 2.2));
     float wm = smoothstep(uBlueLo, uBlueHi, s.b - max(s.r, s.g));
-    float bright = 1.0 - smoothstep(0.30, 0.60, max(max(s.r, s.g), s.b));
-    float prior = clamp(textureLod(uWater, vUv, uPriorLod).r * uPriorK, 0.0, 1.0);
+    float bright = 1.0 - smoothstep(uBrLo, uBrHi, max(max(s.r, s.g), s.b));
+    float prior = uPriorK > 0.0 ? clamp(textureLod(uWater, vUv, uPriorLod).r * uPriorK, 0.0, 1.0) : 1.0;
     // wide, forgiving ocean mask used only to hand the deep layer's (blocky, low-resolution) open-ocean pixels over to GIBS
-    float seaMask = smoothstep(0.0, 0.03, s.b - max(s.r, s.g)) * bright * prior;
+    float seaMask = smoothstep(-0.05, 0.0, s.b - max(s.r, s.g)) * (1.0 - smoothstep(0.30, 0.60, max(max(s.r, s.g), s.b))) * smoothstep(0.2, 0.5, textureLod(uWater, vUv, 5.5).r);
+    seaMask = smoothstep(0.1, 0.55, seaMask);          // snap partial values: coastal water is either the deep layer's land or GIBS ocean
     wm *= bright * prior;
     float lum = dot(c, vec3(0.2126, 0.7152, 0.0722));
     vec3 land = pow(max(c, vec3(1e-4)), uGamma) * uGain;
     land = mix(vec3(dot(land, vec3(0.2126, 0.7152, 0.0722))), land, uSat);
-    vec3 sea = uOcean * clamp(pow(lum / uOceanRef, 0.35), 0.5, 1.8);
+    vec3 sea = uOcean * clamp(pow(lum / uOceanRef, 0.35), uSeaMin, uSeaMax);
     vec3 day = mix(land, sea, wm);
 
     vec3 night = texture2D(uNight, uvw).rgb;

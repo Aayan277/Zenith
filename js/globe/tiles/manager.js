@@ -103,7 +103,7 @@ export function createTiles({ THREE, renderer, root, shared, sun, softwareGL = f
         uGamma: { value: new V3(...gr.gamma) }, uGain: { value: new V3(...gr.gain) }, uSat: { value: gr.sat },
         uOcean: { value: new V3(...gr.ocean) }, uOceanRef: { value: gr.oceanRef },
         uGlobal: { value: 0 }, uTilePx: { value: src.tilePx }, uDetail: { value: o.detail },
-        uLights: { value: o.lights }, uDuskFade: { value: o.duskFade }, uPxK: pxKU, uFeather: { value: 0 }, uSeaFade: { value: o.duskFade }, uBlueLo: { value: o.blue[0] }, uBlueHi: { value: o.blue[1] }, uPriorLod: { value: o.prior[0] }, uPriorK: { value: o.prior[1] },
+        uLights: { value: o.lights }, uDuskFade: { value: o.duskFade }, uPxK: pxKU, uFeather: { value: 0 }, uSeaFade: { value: o.duskFade }, uBlueLo: { value: o.blue[0] }, uBlueHi: { value: o.blue[1] }, uPriorLod: { value: o.prior[0] }, uPriorK: { value: o.prior[1] }, uBrLo: { value: o.br[0] }, uBrHi: { value: o.br[1] }, uSeaMax: { value: o.seaMax }, uSeaMin: { value: o.seaMin },
       },
       get(z, x, y) { const k = `${src.id}/${z}/${x}/${y}`; let t = this.tiles.get(k); if (!t) { t = new Tile(layer, z, x, y); this.tiles.set(k, t); } return t; },
       emit: [], glob: 0,
@@ -112,8 +112,8 @@ export function createTiles({ THREE, renderer, root, shared, sun, softwareGL = f
     else layer.roots = [layer.get(0, 0, 0)];
     return layer;
   }
-  const layerA = makeLayer(SOURCES.bm, { order: -4, lift: params.liftA, minReq: SOURCES.bm.roots, detail: 0.6, lights: 1, duskFade: 0, blue: [0.005, 0.04], prior: [2.5, 4] });
-  const layerB = makeLayer(SOURCES.s2, { order: -3, lift: params.liftB, minReq: SOURCES.s2.minRender, detail: 0.3, lights: 0, duskFade: 1, blue: [0.035, 0.075], prior: [5, 3] });
+  const layerA = makeLayer(SOURCES.bm, { order: -4, lift: params.liftA, minReq: SOURCES.bm.roots, detail: 0.6, lights: 1, duskFade: 0, blue: [0.005, 0.04], prior: [0, 0], br: [0.62, 0.9], seaMax: 1.3, seaMin: 1.1 });
+  const layerB = makeLayer(SOURCES.s2, { order: -3, lift: params.liftB, minReq: SOURCES.s2.minRender, detail: 0.3, lights: 0, duskFade: 1, blue: [0.035, 0.075], prior: [5, 3], br: [0.30, 0.60], seaMax: 1.8, seaMin: 0.5 });
   const layers = [layerA, layerB];
   const nightSrc = SOURCES.night;
 
