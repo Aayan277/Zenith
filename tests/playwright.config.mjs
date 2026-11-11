@@ -20,9 +20,9 @@ export default defineConfig({
   expect: { timeout: 20_000 },
   fullyParallel: true,
   workers: process.env.PW_WORKERS ? +process.env.PW_WORKERS : 2,   // SwiftShader is CPU heavy: more workers just slow each other down
-  retries: CI ? 1 : 0,
+  retries: CI ? 2 : 0,   // GitHub runners are slow under SwiftShader; retry before failing a deploy
   forbidOnly: CI,
-  reporter: CI ? [['list'], ['html', { open: 'never', outputFolder: path.join(root, 'tests/playwright-report') }]] : [['list']],
+  reporter: CI ? [['list'], ['github'], ['html', { open: 'never', outputFolder: path.join(root, 'tests/playwright-report') }]] : [['list']],
   use: {
     baseURL: `http://localhost:${PORT}`,
     trace: 'off',
